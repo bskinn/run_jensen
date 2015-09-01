@@ -10,7 +10,7 @@
 # License:     The MIT License; see "license.txt" for full license terms
 #                   and contributor agreement.
 #
-#       This file is a standalone module for execution of M-L diatomic 
+#       This file is a standalone module for execution of M-L diatomic
 #           computations in ORCA, approximately per the approach given in
 #           the above citation.
 #
@@ -45,6 +45,7 @@ class h5_names(object):
     max_mult = 'max_mult'
     mult_prfx = 'm'
     chg_prfx = 'q'
+    orig_prfx = 'o'
     run_base = 'base'
     converger = 'conv'
     out_en = 'energy'
@@ -82,8 +83,8 @@ def do_run(template_file, wkdir=None, \
     """
 
     # Imports
-    from orca_utils import make_timestamp
-    from orca_const import atomSym
+    from opan.utils import make_timestamp
+    from opan.const import atomSym
 
 
     # If wkdir specified, try changing there first
@@ -202,7 +203,7 @@ def write_csv(repo):
     """
 
     # Imports
-    from orca_const import atomSym
+    from opan.const import atomSym
 
     # Generate the csv
     with open(csvfname, mode='w') as csv_f:
@@ -225,7 +226,6 @@ def write_csv(repo):
                 # Helper name strings
                 nm_name = atomSym[nm].capitalize()
                 dia_name = m_name + nm_name
-##                dia_err = "; cannot calculate " + dia_name + " result: "
 
                 # Group links; all store None if group is not present.
                 nm_gp = repo.get(nm_name)
@@ -320,7 +320,7 @@ def write_mult_csv(repo, absolute=False):
     """
 
     # Imports
-    from orca_const import atomSym
+    from opan.const import atomSym
 
     # Generate the csv
     with open(csv_multfname, mode='w') as csv_f:
@@ -390,8 +390,8 @@ def run_mono(at, template_str, repo, exec_cmd):
     """
 
     # Imports
-    from orca_const import atomSym, PHYS
-    from orca_utils import execute_orca as exor
+    from opan.const import atomSym, PHYS
+    from opan.utils import execute_orca as exor
     from time import sleep
     import os
 
@@ -532,9 +532,9 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
     """
 
     # Imports
-    from orca_const import atomSym, PHYS
-    from orca_utils import execute_orca as exor
-    from orca_xyz import ORCA_XYZ as XYZ
+    from opan.const import atomSym, PHYS
+    from opan.utils import execute_orca as exor
+    from opan.xyz import ORCA_XYZ as XYZ
     import os
     from time import sleep
 
@@ -708,73 +708,12 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
         #  stuff, dipole moment
         # Store useful outputs
         store_mult_results(mgp, oo, XYZ(path=(base + ".xyz")))
-##        mgp.create_dataset(name=h5_names.out_en, \
-##                                data=oo.en_last()[oo.EN_SCFFINAL])
-##        mgp.create_dataset(name=h5_names.out_zpe, \
-##                                data=oo.thermo[oo.THERMO_E_ZPE])
-##        mgp.create_dataset(name=h5_names.out_enth, \
-##                                data=oo.thermo[oo.THERMO_H_IG])
-##        mgp.create_dataset(name=h5_names.out_dipmom, \
-##                                data=oo.dipmoms[-1])
-##        x = XYZ(base + ".xyz")
-##        mgp.create_dataset(name=h5_names.out_bondlen, \
-##                            data=(PHYS.Ang_per_Bohr * x.Dist_single(0,0,1)))
-    ## next mult
 
     # Identify the minimum-energy multiplicity and associated properties.
     #  May be inaccurate if key runs fail. parse_mults created to allow re-
     #  running after the fact, once such key runs have been tweaked manually
     #  to re-run satisfactorily.
     parse_mults(diagp, do_logging=True)
-
-##    # Initialize the minimum energy to zero, which everything should be less
-##    #  than!  Also init min_mult to ~error value.
-##    min_en = 0.0
-##    min_mult = 0
-##
-##    # Identify lowest-energy multiplicity, push info to repo
-##    for g in diagp.values():
-##        # Check if a given value is a group and that its name matches the
-##        #  pattern expected of a multiplicity group
-##        if isinstance(g, h5.Group) and p_multgrp.search(g.name) <> None:
-##            # Check if output energy value exists
-##            if not g.get(h5_names.out_en) == None:
-##                # Check if the reported SCF final energy is less than the
-##                #  current minimum.
-##                if g.get(h5_names.out_en).value < min_en:
-##                    # If so, update the minimum and store the multiplicity
-##                    min_en = np.float_(g.get(h5_names.out_en).value)
-##                    min_mult = np.int_(p_multgrp.search(g.name).group("mult"))
-##                ## end if
-##            ## end if
-##        ## end if
-##    ## next g
-##
-##    # Store the minimum energy and multiplicity, and retrieve/store the other
-##    #  thermo values
-##    diagp.create_dataset(name=h5_names.min_en, data=min_en)
-##    diagp.create_dataset(name=h5_names.min_en_mult, data=min_mult)
-##
-##    # Try to retrieve the appropriate group
-##    mgp = diagp.get(h5_names.mult_prfx + str(min_mult))
-##
-##    # If any computation succeeded, *something* will be retrievable. If none
-##    #  did, mgp will be None; report critical error if so.
-##    if mgp == None:
-##        logging.critical("All computations failed for " + \
-##                atomSym[m].capitalize() + atomSym[nm].capitalize())
-##        #TODO: Implement storing of failure values, depending on implementation
-##        #  needs in the encapsulating code.
-##    else:
-##        diagp.create_dataset(name=h5_names.min_en_zpe, \
-##                            data=mgp.get(h5_names.out_zpe).value)
-##        diagp.create_dataset(name=h5_names.min_en_enth, \
-##                            data=mgp.get(h5_names.out_enth).value)
-##        diagp.create_dataset(name=h5_names.min_en_bondlen, \
-##                            data=mgp.get(h5_names.out_bondlen).value)
-##        diagp.create_dataset(name=h5_names.min_en_dipmom, \
-##                            data=mgp.get(h5_names.out_dipmom).value)
-##    ## end if
 
 ## end def run_dia
 
@@ -784,8 +723,7 @@ def store_mult_results(mgp, oo, xyz):
     """
 
     # Imports
-    ##from orca_xyz import ORCA_XYZ as XYZ
-    from orca_const import PHYS
+    from opan.const import PHYS
 
     # Store the data, overwriting if it exists
     mgp.require_dataset(name=h5_names.out_en, \
@@ -822,7 +760,7 @@ def parse_mults(diagp, do_logging=False):
     """
 
     # Imports
-    from orca_const import atomSym
+    from opan.const import atomSym
 
     # Initialize the minimum energy to zero, which everything should be less
     #  than!  Also init min_mult to ~error value.
@@ -945,7 +883,7 @@ def def_dia_xyz(m, nm, dist=init_dia_sep):
     """
 
     # Imports
-    from orca_const import atomSym
+    from opan.const import atomSym
 
     # Construct and return the xyz info
     xyz_str = "  " + atomSym[m].capitalize() + "  0 0 0 \n" + \
