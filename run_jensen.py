@@ -534,7 +534,7 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
     # Imports
     from opan.const import atomSym, PHYS
     from opan.utils import execute_orca as exor
-    from opan.xyz import ORCA_XYZ as XYZ
+    from opan.xyz import OPAN_XYZ as XYZ
     import os
     from time import sleep
 
