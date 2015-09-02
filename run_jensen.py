@@ -45,7 +45,7 @@ class h5_names(object):
     max_mult = 'max_mult'
     mult_prfx = 'm'
     chg_prfx = 'q'
-    orig_prfx = 'o'
+    ref_prfx = 'r'
     run_base = 'base'
     converger = 'conv'
     out_en = 'energy'
@@ -557,157 +557,162 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
         # Create multiplicity subgroup in repo
         mgp = diagp.create_group(h5_names.mult_prfx + str(mult))
 
-        # If a converged opt exists from a prior run, use it as the basis
-        #  for the current multiplicity.  If not, just start fresh.
-        if last_mult > 0:
-            # Build stuff from prior. Start by defining the MOREAD string
-            moread_str = "! MOREAD \n%moinp \"" + last_base + ".gbw\""
+        # Loop over reference multiplicities, from max_mult to current mult
+        for ref in range(max_mult, mult-2, -2):
+            # Create ref multiplicity subgroup
+            rgp = mgp.create_group(h5_names.ref_prfx + str(ref))
 
-            # Only worry about the prior geom if basing sep on it
-            if fixed_dia_sep:
-                # Just use the fixed value
-                xyz_str = def_dia_xyz(m, nm)
-            else:
-                # Load the xyz info. Presume two atoms.
-                x = XYZ(path=(last_base + ".xyz"))
+            # Set & write base string to repo
+            base = build_base(m, nm, chg, mult, ref)
+            rgp.create_dataset(name=h5_names.run_base, data=base)
 
-                # Check that sep not too large
-                if x.Dist_single(0,0,1) * PHYS.Ang_per_Bohr > ditch_sep_thresh:
-                    # Too large; use default
+            # If ref is the same as mult, then start fresh. Otherwise, insist
+            #  on starting from a prior wavefunction.
+            if ref != mult:
+                # Build stuff from prior. Start by defining the MOREAD string,
+                #  which is unambiguous
+                moread_str = build_moread(m, nm, chg, mult, ref)
+
+                # Only worry about the prior geom if basing sep on it
+                if fixed_dia_sep:
+                    # Just use the fixed value
                     xyz_str = def_dia_xyz(m, nm)
                 else:
-                    # OK. Use scaled value from prior, if not too small
-                    xyz_str = def_dia_xyz(m, nm, \
-                    dist=max( \
-                        geom_scale * x.Dist_single(0,0,1) * PHYS.Ang_per_Bohr, \
-                        init_dia_sep
-                            ) )
+                    # Load the xyz info. Presume two atoms.
+                    x = XYZ(path=(build_base(m, nm, chg, mult, ref) + ".xyz"))
+
+                    # Check that sep not too large
+                    if x.Dist_single(0,0,1) * PHYS.Ang_per_Bohr > \
+                                                            ditch_sep_thresh:
+                        # Too large; use default
+                        xyz_str = def_dia_xyz(m, nm)
+                    else:
+                        # OK. Use scaled value from prior, if not too small
+                        xyz_str = def_dia_xyz(m, nm, \
+                        dist=max( \
+                            geom_scale * x.Dist_single(0,0,1) * \
+                            PHYS.Ang_per_Bohr, init_dia_sep
+                                ) )
+                    ## end if
                 ## end if
-            ## end if
-        else:
-            # Build from scratch
-            moread_str = "! NOAUTOSTART"
-            xyz_str = def_dia_xyz(m, nm)
-        ## end if
-
-        # Set & write base string to repo
-        base = "".join(map(str.capitalize, [atomSym[e] for e in[m, nm]])) + \
-                sep + h5_names.chg_prfx + str(chg) + \
-                h5_names.mult_prfx + str(mult)
-        mgp.create_dataset(name=h5_names.run_base, data=base)
-
-        # Reset the 'good convergence' info bit to None
-        good_opt_conv = None
-
-        # Try executing, looping across convergers. Should probably use a
-        #  very small number for %geom MaxIter and perhaps consider a
-        #  Calc_Hess true, to try to avoid unbound cases taking forever
-        #  to run.
-        for conv in convergers:
-            # Pause if pause-file touched
-            while os.path.isfile(os.path.join(os.getcwd(),pausefname)):
-                sleep(2.0)
-            ## loop
-
-            # Clear any temp files
-            clear_tmp(base)
-
-            # Try all convergers with SLOWCONV, clearing temp
-            #  files first
-            clear_tmp(base)
-            oo = exor(template_str, os.getcwd(), [exec_cmd, base], \
-                    sim_name=base, \
-                    subs=[('OPT', str(opt)), \
-                        ('CONV', conv + "\n! SLOWCONV"), \
-                        ('MULT', str(mult)), \
-                        ('CHARGE', str(chg)), \
-                        ('MOREAD', moread_str), \
-                        ('XYZ', xyz_str)
-                        ])[0]
-
-            # Check if completed, converged and optimized; store 'last_'
-            #  variables and break if so
-            if oo.completed and oo.converged and oo.optimized:
-                logging.info(base + " opt converged from '" + \
-                                ("model" if last_mult == 0 else last_base) + \
-                                "' using " + \
-                                (conv if conv <> "" else "default") + \
-                                " & SLOWCONV")
-                mgp.create_dataset(name=h5_names.converger, data= \
-                                (conv if conv <> "" else "default") + \
-                                " & SLOWCONV")
-                last_mult = mult
-                last_base = base
-                break  ## for conv in convergers
             else:
-                logging.warning(base + " opt did not converge using " + \
-                                (conv if conv <> "" else "default") + \
-                                " & SLOWCONV")
-
-                # Check if the optimization at least converged, to store
-                #  for the last-ditch NUMFREQ attempt. Store the first one
-                #  since they're ordered in decreasing likelihood of
-                #  misbehavior
-                if oo.optimized and good_opt_conv == None:
-                    good_opt_conv = conv + "\n! SLOWCONV"
-                ## end if
-            ## end if
-
-            # If not even converged SCF, reset to from-scratch geometry
-            if not oo.converged:
-                ##moread_str = "! NOAUTOSTART"
+                # Build from scratch
+                moread_str = "! NOAUTOSTART"
                 xyz_str = def_dia_xyz(m, nm)
             ## end if
 
-        else:
-            # If never broken, then the whole series of computations failed.
-            #  Try one last go with KDIIS and NUMFREQ, clearing any
-            #  temp files first.
-            clear_tmp(base)
-            oo = exor(template_str.replace("ANFREQ", \
-                            "NUMFREQ \n%freq  Increment 0.01  end"), \
-                    os.getcwd(), [exec_cmd, base], \
-                    sim_name=base, \
-                    subs=[('OPT', str(opt)), \
-                        ('CONV', (good_opt_conv if good_opt_conv <> None \
-                                            else "! KDIIS \n! SLOWCONV ") ), \
-##                            "\n%method Z_Solver DIIS Z_MaxIter 800 end"), \
-##                            "\n! NUMFREQ \n%freq  Increment 0.01  end"), \
-                        ('MULT', str(mult)), \
-                        ('CHARGE', str(chg)), \
-                        ('MOREAD', moread_str), \
-                        ('XYZ', xyz_str)
-                        ])[0]
+            # Reset the 'good convergence' info bit to None
+            good_opt_conv = None
 
-            # Check if completed, converged and optimized; store 'last_'
-            #  variables if so; if not, log and skip to next multiplicity.
-            if oo.completed and oo.converged and oo.optimized:
-                good_opt_conv = "! KDIIS \n! SLOWCONV "
-                logging.info(base + " opt converged from '" + \
+            # Try executing, looping across convergers. Should probably use a
+            #  very small number for %geom MaxIter and perhaps consider a
+            #  Calc_Hess true, to try to avoid unbound cases taking forever
+            #  to run.
+            for conv in convergers:
+                # Pause if pause-file touched
+                while os.path.isfile(os.path.join(os.getcwd(),pausefname)):
+                    sleep(2.0)
+                ## loop
+
+                # Try all convergers with SLOWCONV, clearing temp
+                #  files first
+                clear_tmp(base)
+                oo = exor(template_str, os.getcwd(), [exec_cmd, base], \
+                        sim_name=base, \
+                        subs=[('OPT', str(opt)), \
+                            ('CONV', conv + "\n! SLOWCONV"), \
+                            ('MULT', str(mult)), \
+                            ('CHARGE', str(chg)), \
+                            ('MOREAD', moread_str), \
+                            ('XYZ', xyz_str)
+                            ])[0]
+
+                # Check if completed, converged and optimized; store 'last_'
+                #  variables and break if so
+                #RESUME: Conversion to ref-run setup
+                if oo.completed and oo.converged and oo.optimized:
+                    logging.info(base + " opt converged from '" + \
                                 ("model" if last_mult == 0 else last_base) + \
                                 "' using " + \
-                                good_opt_conv.replace('\n', " & ") \
-                                            .replace("! ","") + " & NUMFREQ")
-                mgp.create_dataset(name=h5_names.converger, data= \
-                                good_opt_conv.replace('\n', " & ") \
-                                            .replace("!"," ") + " & NUMFREQ")
-                last_mult = mult
-                last_base = base
-            else:
-                #  Log and skip to next multiplicity.
-                logging.critical(base + \
-                            " opt failed to converge in all computations.")
-                mgp.create_dataset(name=h5_names.converger, data="FAILED")
+                                (conv if conv <> "" else "default") + \
+                                " & SLOWCONV")
+                    mgp.create_dataset(name=h5_names.converger, data= \
+                                (conv if conv <> "" else "default") + \
+                                " & SLOWCONV")
+                    last_mult = mult
+                    last_base = base
+                    break  ## for conv in convergers
+                else:
+                    logging.warning(base + " opt did not converge using " + \
+                                    (conv if conv <> "" else "default") + \
+                                    " & SLOWCONV")
 
-                # Resume processing
-                continue  ## next mult, since in 'else' of 'conv' loop
-            ## end if
-        ## next conv
+                    # Check if the optimization at least converged, to store
+                    #  for the last-ditch NUMFREQ attempt. Store the first one
+                    #  since they're ordered in decreasing likelihood of
+                    #  misbehavior
+                    if oo.optimized and good_opt_conv == None:
+                        good_opt_conv = conv + "\n! SLOWCONV"
+                    ## end if
+                ## end if
+
+                # If not even converged SCF, reset to from-scratch geometry
+                if not oo.converged:
+                    ##moread_str = "! NOAUTOSTART"
+                    xyz_str = def_dia_xyz(m, nm)
+                ## end if
+
+            else:
+                # If never broken, then the whole series of computations failed.
+                #  Try one last go with KDIIS and NUMFREQ, clearing any
+                #  temp files first.
+                clear_tmp(base)
+                oo = exor(template_str.replace("ANFREQ", \
+                                "NUMFREQ \n%freq  Increment 0.01  end"), \
+                        os.getcwd(), [exec_cmd, base], \
+                        sim_name=base, \
+                        subs=[('OPT', str(opt)), \
+                            ('CONV', (good_opt_conv if good_opt_conv <> None \
+                                                else "! KDIIS \n! SLOWCONV ") ), \
+                            ('MULT', str(mult)), \
+                            ('CHARGE', str(chg)), \
+                            ('MOREAD', moread_str), \
+                            ('XYZ', xyz_str)
+                            ])[0]
+
+                # Check if completed, converged and optimized; store 'last_'
+                #  variables if so; if not, log and skip to next multiplicity.
+                if oo.completed and oo.converged and oo.optimized:
+                    good_opt_conv = "! KDIIS \n! SLOWCONV "
+                    logging.info(base + " opt converged from '" + \
+                                    ("model" if last_mult == 0 else last_base) + \
+                                    "' using " + \
+                                    good_opt_conv.replace('\n', " & ") \
+                                                .replace("! ","") + " & NUMFREQ")
+                    mgp.create_dataset(name=h5_names.converger, data= \
+                                    good_opt_conv.replace('\n', " & ") \
+                                                .replace("!"," ") + " & NUMFREQ")
+                    last_mult = mult
+                    last_base = base
+                else:
+                    #  Log and skip to next multiplicity.
+                    logging.critical(base + \
+                                " opt failed to converge in all computations.")
+                    mgp.create_dataset(name=h5_names.converger, data="FAILED")
+
+                    # Resume processing
+                    continue  ## next mult, since in 'else' of 'conv' loop
+                ## end if
+            ## next conv
+
+        ## next ref
 
         # Store useful outputs to repo - bond length, final energy, HESS
         #  stuff, dipole moment
         # Store useful outputs
         store_mult_results(mgp, oo, XYZ(path=(base + ".xyz")))
+
+    ## next mult
 
     # Identify the minimum-energy multiplicity and associated properties.
     #  May be inaccurate if key runs fail. parse_mults created to allow re-
@@ -891,6 +896,36 @@ def def_dia_xyz(m, nm, dist=init_dia_sep):
     return xyz_str
 
 
+def build_moread(m, nm, chg, mult, ref):
+    """ #DOC: build_moread docstring
+    """
+
+    mo_str = '"' + build_base(m, nm, chg, mult, ref) + '.gbw"'
+
+    mo_str = '! MOREAD\n%moinp ' + mo_str
+
+    return mo_str
+
+## end def build_moread
+
+
+def build_base(m, nm, chg, mult, ref):
+    """ #DOC: build_base docstring
+    """
+
+    # Imports
+    from opan.const import atomSym
+
+    base_str = atomSym[m].capitalize() + atomSym[nm].capitalize() + sep + \
+                h5_names.chg_prfx + str(chg) + \
+                h5_names.mult_prfx + str(mult) + \
+                h5_names.ref_prfx + str(ref)
+
+    return base_str
+
+## end def build_base
+
+
 def safe_retr(group, dataname, errdesc, log_absent=True):
     """ #DOC: docstring for safe_retr
     """
@@ -905,6 +940,8 @@ def safe_retr(group, dataname, errdesc, log_absent=True):
     ## end try
 
     return workvar
+
+## end def safe_retr
 
 
 if __name__ == '__main__':
