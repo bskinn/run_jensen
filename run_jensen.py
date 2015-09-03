@@ -36,6 +36,7 @@ convergers = ["", "! KDIIS", "! SOSCF"] #, "! NRSCF"]
 init_dia_sep = 2.1  # Angstroms
 fixed_dia_sep = True
 ditch_sep_thresh = 4.0
+pausetime = 2.0
 sep = "_"
 NA_str = "NA"
 
@@ -521,7 +522,7 @@ def run_mono(at, template_str, repo, exec_cmd):
 
     # Pause if indicator file present
     while os.path.isfile(os.path.join(os.getcwd(),pausefname)):
-        sleep(2.0)
+        sleep(pausetime)
     ## loop
 
 ## end def run_mono
@@ -530,7 +531,8 @@ def run_mono(at, template_str, repo, exec_cmd):
 def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
     """ #DOC: Docstring for run_dia
     """
-
+    #TODO: Will have to rework, or add new method, to enable smooth restarts
+    #  if/when the main, initial run doesn't converge on a diatomic/mult/ref
     # Imports
     from opan.const import atomSym, PHYS
     from opan.utils import execute_orca as exor
@@ -549,8 +551,8 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                                         data=max_mult)
 
     # Initialize the reporter variables for converged opts
-    last_mult = 0
-    last_base = None
+##    last_mult = 0
+##    last_base = None
 
     # Loop over multiplicities, optimizing, until minimum mult is reached
     for mult in range(max_mult, -(max_mult % 2), -2):
@@ -611,7 +613,7 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
             for conv in convergers:
                 # Pause if pause-file touched
                 while os.path.isfile(os.path.join(os.getcwd(),pausefname)):
-                    sleep(2.0)
+                    sleep(pausetime)
                 ## loop
 
                 # Try all convergers with SLOWCONV, clearing temp
@@ -629,88 +631,88 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
 
                 # Check if completed, converged and optimized; store 'last_'
                 #  variables and break if so
-                #RESUME: Conversion to ref-run setup
                 if oo.completed and oo.converged and oo.optimized:
                     logging.info(base + " opt converged from '" + \
-                                ("model" if last_mult == 0 else last_base) + \
+                                ("model" if ref == mult else \
+                                        build_base(m, nm, chg, ref)) + \
                                 "' using " + \
                                 (conv if conv <> "" else "default") + \
                                 " & SLOWCONV")
-                    mgp.create_dataset(name=h5_names.converger, data= \
+                    rgp.create_dataset(name=h5_names.converger, data= \
                                 (conv if conv <> "" else "default") + \
                                 " & SLOWCONV")
-                    last_mult = mult
-                    last_base = base
+##                    last_mult = mult
+##                    last_base = base
                     break  ## for conv in convergers
                 else:
                     logging.warning(base + " opt did not converge using " + \
                                     (conv if conv <> "" else "default") + \
                                     " & SLOWCONV")
 
-                    # Check if the optimization at least converged, to store
-                    #  for the last-ditch NUMFREQ attempt. Store the first one
-                    #  since they're ordered in decreasing likelihood of
-                    #  misbehavior
-                    if oo.optimized and good_opt_conv == None:
-                        good_opt_conv = conv + "\n! SLOWCONV"
-                    ## end if
                 ## end if
 
-                # If not even converged SCF, reset to from-scratch geometry
-                if not oo.converged:
-                    ##moread_str = "! NOAUTOSTART"
-                    xyz_str = def_dia_xyz(m, nm)
-                ## end if
-
-            else:
+            else:  ## on for conv in convergers:
                 # If never broken, then the whole series of computations failed.
                 #  Try one last go with KDIIS and NUMFREQ, clearing any
-                #  temp files first.
-                clear_tmp(base)
-                oo = exor(template_str.replace("ANFREQ", \
-                                "NUMFREQ \n%freq  Increment 0.01  end"), \
-                        os.getcwd(), [exec_cmd, base], \
-                        sim_name=base, \
-                        subs=[('OPT', str(opt)), \
-                            ('CONV', (good_opt_conv if good_opt_conv <> None \
-                                                else "! KDIIS \n! SLOWCONV ") ), \
-                            ('MULT', str(mult)), \
-                            ('CHARGE', str(chg)), \
-                            ('MOREAD', moread_str), \
-                            ('XYZ', xyz_str)
-                            ])[0]
+                #  temp files first, but only if ANFREQ is found in the
+                #  template
+                if template_str.upper().find('ANFREQ') > -1:
+                    clear_tmp(base)
+                    oo = exor(template_str.replace("ANFREQ", \
+                                    "NUMFREQ \n%freq  Increment 0.01  end"), \
+                            os.getcwd(), [exec_cmd, base], \
+                            sim_name=base, \
+                            subs=[('OPT', str(opt)), \
+                                ('CONV', \
+                                    (good_opt_conv if good_opt_conv != None \
+                                            else "! KDIIS \n! SLOWCONV ") ), \
+                                ('MULT', str(mult)), \
+                                ('CHARGE', str(chg)), \
+                                ('MOREAD', moread_str), \
+                                ('XYZ', xyz_str)
+                                ])[0]
 
-                # Check if completed, converged and optimized; store 'last_'
-                #  variables if so; if not, log and skip to next multiplicity.
-                if oo.completed and oo.converged and oo.optimized:
-                    good_opt_conv = "! KDIIS \n! SLOWCONV "
-                    logging.info(base + " opt converged from '" + \
-                                    ("model" if last_mult == 0 else last_base) + \
-                                    "' using " + \
-                                    good_opt_conv.replace('\n', " & ") \
-                                                .replace("! ","") + " & NUMFREQ")
-                    mgp.create_dataset(name=h5_names.converger, data= \
-                                    good_opt_conv.replace('\n', " & ") \
-                                                .replace("!"," ") + " & NUMFREQ")
-                    last_mult = mult
-                    last_base = base
+                    # Check if completed, converged and optimized; store 'last_'
+                    #  variables if so; if not, log and skip to next multiplicity.
+                    if oo.completed and oo.converged and oo.optimized:
+                        good_opt_conv = "! KDIIS \n! SLOWCONV "
+                        logging.info(base + " opt converged from '" + \
+                                ("model" if mult == ref else \
+                                        build_base(m, nm, chg, ref)) + \
+                                "' using " + \
+                                good_opt_conv.replace('\n', " & ") \
+                                            .replace("! ","") + " & NUMFREQ")
+                        rgp.create_dataset(name=h5_names.converger, data= \
+                                good_opt_conv.replace('\n', " & ") \
+                                            .replace("!"," ") + " & NUMFREQ")
+##                        last_mult = mult
+##                        last_base = base
+                    else:
+                        # Log critical failure and return.
+                        logging.critical(base + \
+                                " opt failed to converge in all computations.")
+                        mgp.create_dataset(name=h5_names.converger, \
+                                                            data="FAILED")
+
+                        # Skip remainder of processing of this diatomic
+                        return
+                    ## end if run succeeded
                 else:
-                    #  Log and skip to next multiplicity.
+                    #  Log critical failure and return.
                     logging.critical(base + \
                                 " opt failed to converge in all computations.")
-                    mgp.create_dataset(name=h5_names.converger, data="FAILED")
+                    rgp.create_dataset(name=h5_names.converger, data="FAILED")
 
-                    # Resume processing
-                    continue  ## next mult, since in 'else' of 'conv' loop
-                ## end if
+                    # Skip remainder of processing of this diatomic
+                    return
+                ## end if ANFREQ present in template
             ## next conv
 
-        ## next ref
+            # Store useful outputs to repo - bond length, final energy, HESS
+            #  stuff, dipole moment
+            store_run_results(rgp, oo, XYZ(path=(base + ".xyz")))
 
-        # Store useful outputs to repo - bond length, final energy, HESS
-        #  stuff, dipole moment
-        # Store useful outputs
-        store_mult_results(mgp, oo, XYZ(path=(base + ".xyz")))
+        ## next ref
 
     ## next mult
 
@@ -723,7 +725,7 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
 ## end def run_dia
 
 
-def store_mult_results(mgp, oo, xyz):
+def store_run_results(rgp, oo, xyz):
     """ #DOC: store_mult_results docstring
     """
 
@@ -731,27 +733,27 @@ def store_mult_results(mgp, oo, xyz):
     from opan.const import PHYS
 
     # Store the data, overwriting if it exists
-    mgp.require_dataset(name=h5_names.out_en, \
+    rgp.require_dataset(name=h5_names.out_en, \
                                 shape=(), \
                                 dtype=np.float_, \
                                 exact=False, \
                                 data=oo.en_last()[oo.EN_SCFFINAL])
-    mgp.require_dataset(name=h5_names.out_zpe, \
+    rgp.require_dataset(name=h5_names.out_zpe, \
                                 shape=(), \
                                 dtype=np.float_, \
                                 exact=False, \
                                 data=oo.thermo[oo.THERMO_E_ZPE])
-    mgp.require_dataset(name=h5_names.out_enth, \
+    rgp.require_dataset(name=h5_names.out_enth, \
                                 shape=(), \
                                 dtype=np.float_, \
                                 exact=False, \
                                 data=oo.thermo[oo.THERMO_H_IG])
-    mgp.require_dataset(name=h5_names.out_dipmom, \
+    rgp.require_dataset(name=h5_names.out_dipmom, \
                                 shape=(), \
                                 dtype=np.float_, \
                                 exact=False, \
                                 data=oo.dipmoms[-1])
-    mgp.require_dataset(name=h5_names.out_bondlen, \
+    rgp.require_dataset(name=h5_names.out_bondlen, \
                                 shape=(), \
                                 dtype=np.float_, \
                                 exact=False, \
@@ -763,7 +765,7 @@ def store_mult_results(mgp, oo, xyz):
 def parse_mults(diagp, do_logging=False):
     """ #DOC: parse_mults docstring
     """
-
+    #RESUME: Re-work to accommodate the 'ref' groups
     # Imports
     from opan.const import atomSym
 
@@ -896,7 +898,7 @@ def def_dia_xyz(m, nm, dist=init_dia_sep):
     return xyz_str
 
 
-def build_moread(m, nm, chg, mult, ref):
+def build_moread(m, nm, chg, mult, ref=None):
     """ #DOC: build_moread docstring
     """
 
@@ -909,7 +911,7 @@ def build_moread(m, nm, chg, mult, ref):
 ## end def build_moread
 
 
-def build_base(m, nm, chg, mult, ref):
+def build_base(m, nm, chg, mult, ref=None):
     """ #DOC: build_base docstring
     """
 
@@ -919,7 +921,7 @@ def build_base(m, nm, chg, mult, ref):
     base_str = atomSym[m].capitalize() + atomSym[nm].capitalize() + sep + \
                 h5_names.chg_prfx + str(chg) + \
                 h5_names.mult_prfx + str(mult) + \
-                h5_names.ref_prfx + str(ref)
+                (h5_names.ref_prfx + str(ref) if ref != None else "")
 
     return base_str
 
