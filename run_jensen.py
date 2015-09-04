@@ -56,6 +56,7 @@ class h5_names(object):
     out_dipmom = 'dipole_moment'
     min_en = 'min_en'
     min_en_mult = 'min_en_mult'
+    min_en_ref = 'min_en_ref'
     min_en_zpe = 'min_en_zpe'
     min_en_enth = 'min_en_enth'
     min_en_bondlen = 'min_en_bondlen'
@@ -64,6 +65,7 @@ class h5_names(object):
 
 # Regex patterns for quick testing
 p_multgrp = re.compile("/" + h5_names.mult_prfx + "(?P<mult>[0-9]+)$")
+p_refgrp = re.compile("/" + h5_names.ref_prfx + "(?P<ref>[0-9]+)$")
 
 # Atomic numbers for elements, and the max associated unpaired electrons
 metals = set(range(21,31))
@@ -386,6 +388,12 @@ def write_mult_csv(repo, absolute=False):
 ## end def write_mult_csv
 
 
+#TODO: Write further CSV writers, perhaps a general one that writes a CSV for
+#  a quantity specified by some sort of 'enum'?  Or/also, one that generates
+#  summaries of properties across the matrix of multiplicities and reference
+#  wavefunctions?
+
+
 def run_mono(at, template_str, repo, exec_cmd):
     """ #DOC: Docstring for run_mono
     """
@@ -636,17 +644,17 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                                 ("model" if ref == mult else \
                                         build_base(m, nm, chg, ref)) + \
                                 "' using " + \
-                                (conv if conv <> "" else "default") + \
+                                (conv if conv != "" else "default") + \
                                 " & SLOWCONV")
                     rgp.create_dataset(name=h5_names.converger, data= \
-                                (conv if conv <> "" else "default") + \
+                                (conv if conv != "" else "default") + \
                                 " & SLOWCONV")
 ##                    last_mult = mult
 ##                    last_base = base
                     break  ## for conv in convergers
                 else:
                     logging.warning(base + " opt did not converge using " + \
-                                    (conv if conv <> "" else "default") + \
+                                    (conv if conv != "" else "default") + \
                                     " & SLOWCONV")
 
                 ## end if
@@ -673,7 +681,8 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                                 ])[0]
 
                     # Check if completed, converged and optimized; store 'last_'
-                    #  variables if so; if not, log and skip to next multiplicity.
+                    #  variables if so; if not, log and skip to next
+                    #  multiplicity.
                     if oo.completed and oo.converged and oo.optimized:
                         good_opt_conv = "! KDIIS \n! SLOWCONV "
                         logging.info(base + " opt converged from '" + \
@@ -731,7 +740,7 @@ def store_run_results(rgp, oo, xyz):
 
     # Imports
     from opan.const import PHYS
-
+    #TODO: Expand data stored in store_run_results as ORCA_OUTPUT expanded
     # Store the data, overwriting if it exists
     rgp.require_dataset(name=h5_names.out_en, \
                                 shape=(), \
@@ -765,7 +774,7 @@ def store_run_results(rgp, oo, xyz):
 def parse_mults(diagp, do_logging=False):
     """ #DOC: parse_mults docstring
     """
-    #RESUME: Re-work to accommodate the 'ref' groups
+
     # Imports
     from opan.const import atomSym
 
@@ -773,20 +782,33 @@ def parse_mults(diagp, do_logging=False):
     #  than!  Also init min_mult to ~error value.
     min_en = 0.0
     min_mult = 0
+    min_ref = 0
 
-    # Identify lowest-energy multiplicity, push info to repo
-    for g in diagp.values():
+    # Identify lowest-energy multiplicity and wavefunction reference; push
+    #  info to repo
+    for mg in diagp.values():
         # Check if a given value is a group and that its name matches the
         #  pattern expected of a multiplicity group
-        if isinstance(g, h5.Group) and p_multgrp.search(g.name) <> None:
-            # Check if output energy value exists
-            if not g.get(h5_names.out_en) == None:
-                # Check if the reported SCF final energy is less than the
-                #  current minimum.
-                if g.get(h5_names.out_en).value < min_en:
-                    # If so, update the minimum and store the multiplicity
-                    min_en = np.float_(g.get(h5_names.out_en).value)
-                    min_mult = np.int_(p_multgrp.search(g.name).group("mult"))
+        if isinstance(mg, h5.Group) and p_multgrp.search(mg.name) != None:
+            # Loop over items in the multiplicity group
+            for rg in mg.values():
+                # Check if group and name matches ref group pattern
+                if isinstance(rg, h5.Group) and \
+                                    p_refgrp.search(rg.name) != None:
+                    # Check if output energy value exists
+                    if not g.get(h5_names.out_en) == None:
+                        # Check if the reported SCF final energy is less than
+                        #  the current minimum.
+                        if g.get(h5_names.out_en).value < min_en:
+                            # If so, update the minimum and store the
+                            #  multiplicity/reference wfn
+                            min_en = np.float_(g.get(h5_names.out_en).value)
+                            min_mult = np.int_(p_multgrp.search(mg.name) \
+                                                                .group("mult"))
+                            min_ref = np.int_(p_refgrp.search(rg.name) \
+                                                                .group("ref"))
+                        ## end if
+                    ## end if
                 ## end if
             ## end if
         ## end if
@@ -804,41 +826,40 @@ def parse_mults(diagp, do_logging=False):
                                 dtype=np.int_, \
                                 exact=False, \
                                 data=min_mult)
+    diagp.require_dataset(name=h5_names.min_en_ref, \
+                                shape=(), \
+                                dtype=np.int_, \
+                                exact=False, \
+                                data=min_ref)
 
-    # Try to retrieve the appropriate group
-    mgp = diagp.get(h5_names.mult_prfx + str(min_mult))
+    # Try to retrieve the appropriate groups
+    mg = diagp.get(h5_names.mult_prfx + str(min_mult))
+    try:
+        rg = mg.get(h5_names.ref_prfx + str(min_ref))
+    except AttributeError:
+        rg = None
+    ## end try
 
-    # If any computation succeeded, *something* will be retrievable. If none
-    #  did, mgp will be None; report critical error if so.
-    if mgp == None:
-        if do_logging:
-            logging.critical("All computations failed for " + \
-                    atomSym[m].capitalize() + atomSym[nm].capitalize())
-            #TODO: Implement storing of failure values, depending on
-            #  implementation needs in the encapsulating code.
-        ## end if
-    else:
-        diagp.require_dataset(name=h5_names.min_en_zpe, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                            data=mgp.get(h5_names.out_zpe).value)
-        diagp.require_dataset(name=h5_names.min_en_enth, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                            data=mgp.get(h5_names.out_enth).value)
-        diagp.require_dataset(name=h5_names.min_en_bondlen, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                            data=mgp.get(h5_names.out_bondlen).value)
-        diagp.require_dataset(name=h5_names.min_en_dipmom, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                            data=mgp.get(h5_names.out_dipmom).value)
-    ## end if
+    diagp.require_dataset(name=h5_names.min_en_zpe, \
+                            shape=(), \
+                            dtype=np.float_, \
+                            exact=False, \
+                        data=rg.get(h5_names.out_zpe).value)
+    diagp.require_dataset(name=h5_names.min_en_enth, \
+                            shape=(), \
+                            dtype=np.float_, \
+                            exact=False, \
+                        data=rg.get(h5_names.out_enth).value)
+    diagp.require_dataset(name=h5_names.min_en_bondlen, \
+                            shape=(), \
+                            dtype=np.float_, \
+                            exact=False, \
+                        data=rg.get(h5_names.out_bondlen).value)
+    diagp.require_dataset(name=h5_names.min_en_dipmom, \
+                            shape=(), \
+                            dtype=np.float_, \
+                            exact=False, \
+                        data=rg.get(h5_names.out_dipmom).value)
 
 ## end def parse_mults
 
