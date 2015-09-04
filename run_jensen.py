@@ -801,13 +801,13 @@ def parse_mults(diagp, do_logging=False):
                 if isinstance(rg, h5.Group) and \
                                     p_refgrp.search(rg.name) != None:
                     # Check if output energy value exists
-                    if not g.get(h5_names.out_en) == None:
+                    if not rg.get(h5_names.out_en) == None:
                         # Check if the reported SCF final energy is less than
                         #  the current minimum.
-                        if g.get(h5_names.out_en).value < min_en:
+                        if rg.get(h5_names.out_en).value < min_en:
                             # If so, update the minimum and store the
                             #  multiplicity/reference wfn
-                            min_en = np.float_(g.get(h5_names.out_en).value)
+                            min_en = np.float_(rg.get(h5_names.out_en).value)
                             min_mult = np.int_(p_multgrp.search(mg.name) \
                                                                 .group("mult"))
                             min_ref = np.int_(p_refgrp.search(rg.name) \
@@ -837,7 +837,7 @@ def parse_mults(diagp, do_logging=False):
                                 exact=False, \
                                 data=min_ref)
 
-    # Try to retrieve the appropriate groups
+    # Try to retrieve the appropriate min groups
     mg = diagp.get(h5_names.mult_prfx + str(min_mult))
     try:
         rg = mg.get(h5_names.ref_prfx + str(min_ref))
