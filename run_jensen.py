@@ -39,7 +39,7 @@ ditch_sep_thresh = 4.0
 pausetime = 2.0
 sep = "_"
 NA_str = "NA"
-
+skip_atoms = False
 
 # Class for names of subgroups
 class h5_names(object):
@@ -148,11 +148,16 @@ def do_run(template_file, wkdir=None, \
     # Create the data repository
     repo = h5.File(repofname, 'a')
 
-    # Loop atoms (atomic calculations)
-    for at in metals.union(nonmetals):
-        run_mono(at, template_str, repo, exec_cmd)
-        repo.flush()
-    ## next at
+    # Log notice if skipping atoms
+    if skip_atoms:
+        logging.warning("SKIPPING ATOM COMPUTATIONS PER SCRIPT FLAG")
+    else:
+        # Loop atoms (atomic calculations)
+        for at in metals.union(nonmetals):
+            run_mono(at, template_str, repo, exec_cmd)
+            repo.flush()
+        ## next at
+    ## end if
 
     # Loop atom pairs (diatomics) for run execution
     for m in metals:
@@ -581,7 +586,7 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
             if ref != mult:
                 # Build stuff from prior. Start by defining the MOREAD string,
                 #  which is unambiguous
-                moread_str = build_moread(m, nm, chg, mult, ref)
+                moread_str = build_moread(m, nm, chg, ref, ref)
 
                 # Only worry about the prior geom if basing sep on it
                 if fixed_dia_sep:
@@ -589,7 +594,7 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                     xyz_str = def_dia_xyz(m, nm)
                 else:
                     # Load the xyz info. Presume two atoms.
-                    x = XYZ(path=(build_base(m, nm, chg, mult, ref) + ".xyz"))
+                    x = XYZ(path=(build_base(m, nm, chg, ref, ref) + ".xyz"))
 
                     # Check that sep not too large
                     if x.Dist_single(0,0,1) * PHYS.Ang_per_Bohr > \
@@ -981,6 +986,7 @@ if __name__ == '__main__':
     NONMETALS = 'nonmetals'
     CATION_NMS = 'cation_nms'
     INIT_SEP_DIA = 'init_sep_dia'
+    SKIP_ATOMS = 'skip_atoms'
 
     # Create the parser
     prs = ap.ArgumentParser(description="Perform Jensen diatomics " + \
@@ -1020,6 +1026,10 @@ if __name__ == '__main__':
                 "atoms in diatomic computations, in Angstroms. " + \
                 "Default is " + str(init_dia_sep) + " Angstroms.", default=None)
 
+    prs.add_argument("--" + SKIP_ATOMS, help="Skip atom computations, " + \
+                "generally for debugging purposes.", default=False, \
+                const=True, action='store_const')
+
     # Make the param namespace and retrieve the params dictionary
     ns = prs.parse_args()
     params = vars(ns)
@@ -1038,6 +1048,7 @@ if __name__ == '__main__':
     if not params[INIT_SEP_DIA] == None:
         init_dia_sep = float(params[INIT_SEP_DIA])
     ## end if
+    skip_atoms = bool(params[SKIP_ATOMS])
 
     # Execute the run
     do_run(params[TMPLT_FILE], \
