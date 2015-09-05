@@ -37,6 +37,8 @@ NA_str = "NA"
 exec_cmd = 'runorca_pal.bat'
 opt_str = '! TIGHTOPT'
 convergers = ["", "! KDIIS", "! SOSCF"] #, "! NRSCF"]
+req_tag_strs = ['<MOREAD>', '<MULT>', '<XYZ>', '<OPT>', '<CONV>', \
+                '<CHARGE>']
 init_dia_sep = 2.1  # Angstroms
 fixed_dia_sep = True
 ditch_sep_thresh = 4.0
@@ -99,7 +101,6 @@ def do_run(template_file, wkdir=None):
     from opan.utils import make_timestamp
     from opan.const import atomSym
 
-
     # If wkdir specified, try changing there first
     if not wkdir == None:
         old_wkdir = os.getcwd()
@@ -123,13 +124,7 @@ def do_run(template_file, wkdir=None):
     logger.info("Working in directory: " + os.getcwd())
 
     # Proofread the template
-    tag_strs = ['<MOREAD>', '<MULT>', '<XYZ>', '<OPT>', '<CONV>', \
-                '<CHARGE>']
-    for tag in tag_strs:
-        if template_str.find(tag) == -1:
-            raise(ValueError("'" + tag + "' tag absent in template."))
-        ## end if
-    ## next tag
+    proof_template(template_str)
 
     # Log the template file contents
     logger.info("Template file '" + template_file + "' contents:\n\n" + \
@@ -164,7 +159,7 @@ def do_run(template_file, wkdir=None):
     else:
         # Loop atoms (atomic calculations)
         for at in metals.union(nonmetals):
-            run_mono(at, template_str, repo, exec_cmd)
+            run_mono(at, template_str, repo)
             repo.flush()
         ## next at
     ## end if
@@ -173,16 +168,14 @@ def do_run(template_file, wkdir=None):
     for m in metals:
         for nm in nonmetals:
             # Run the diatomic optimizations
-            run_dia(m, nm, 0, template_str, opt_str, repo, \
-                                                    exec_cmd, geom_scale)
+            run_dia(m, nm, 0, template_str, repo)
 
             # Ensure repository is updated
             repo.flush()
 
             # Run the diatomic monocation optimizations for hydrides, oxides
             if nm in cation_nms:
-                run_dia(m, nm, 1, template_str, opt_str, repo, \
-                                                    exec_cmd, geom_scale)
+                run_dia(m, nm, 1, template_str, repo)
             ## end if
 
             # Ensure repository is updated
@@ -217,8 +210,72 @@ def do_run(template_file, wkdir=None):
 ## end def do_run
 
 
-def continue_dia(m, nm, chg, mult, ref, template_file, wkdir=None):
-    pass
+def continue_dia(template_file, m, nm, chg, mult, ref, wkdir=None):
+
+    # Imports
+    from opan.utils import make_timestamp
+    from opan.const import atomSym
+
+    # If wkdir specified, try changing there first
+    if not wkdir == None:
+        old_wkdir = os.getcwd()
+        os.chdir(wkdir)
+    ## end if
+
+    # Pull in the template
+    with open(template_file) as f:
+        template_str = f.read()
+    ## end with
+
+    # Set up and create the log, and log wkdir
+    setup_logger()
+    logger = logging.getLogger(log_names.loggername)
+    logger.info("Jensen calc series started: " + time.strftime("%c"))
+    logger.info("Working in directory: " + os.getcwd())
+
+    # Proofread the template
+    proof_template(template_str)
+
+    # Log the template file contents
+    logger.info("Template file '" + template_file + "' contents:\n\n" + \
+                                                                template_str)
+
+    # Store the starting time
+    start_time = time.time()
+
+    # Retrieve the data repository
+    repo = h5.File(repofname, 'a')
+
+    # Log the restart
+    logger.info("Restarting '" + build_base(m, nm, chg) + \
+                "' at multiplicity " + str(mult) + ", reference " + \
+                "multiplicity " + str(ref))
+
+    # Run the diatomic optimizations, with restart point
+    run_dia(m, nm, chg, template_str, repo, startvals=(mult, ref))
+
+    # Ensure repository is updated
+    repo.flush()
+
+    # Clear any residual temp files from failed comps
+    clear_tmp(atomSym[m].capitalize() + atomSym[nm].capitalize())
+
+    # Generate the results csv
+    write_csv(repo)
+    logger.info("CSV file generated.")
+
+    # Close the repository
+    repo.close()
+
+    # If workdir specified, return to old
+    if wkdir != None:
+        os.chdir(old_wkdir)
+    ## end if
+
+    # Log end of execution
+    logger.info("Diatomic recalc ended: " + time.strftime("%c"))
+    logger.info("Total elapsed time: " + \
+                                    make_timestamp(time.time() - start_time))
 
 ## end def continue_dia
 
@@ -417,7 +474,7 @@ def write_mult_csv(repo, absolute=False):
 #  wavefunctions?
 
 
-def run_mono(at, template_str, repo, exec_cmd):
+def run_mono(at, template_str, repo):
     """ #DOC: Docstring for run_mono
     """
 
@@ -560,11 +617,10 @@ def run_mono(at, template_str, repo, exec_cmd):
 ## end def run_mono
 
 
-def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
+def run_dia(m, nm, chg, template_str, repo, startvals=None):
     """ #DOC: Docstring for run_dia
     """
-    #TODO: Will have to rework, or add new method, to enable smooth restarts
-    #  if/when the main, initial run doesn't converge on a diatomic/mult/ref
+
     # Imports
     from opan.const import atomSym, PHYS
     from opan.utils import execute_orca as exor
@@ -575,33 +631,45 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
     # Retrieve logger
     logger = logging.getLogger(log_names.loggername)
 
-    # Create group in the repo for the diatomic & charge
-    diagp = repo.create_group(atomSym[m].capitalize() + \
-                            atomSym[nm].capitalize() + sep + \
-                            h5_names.chg_prfx + str(chg))
+    # Create/retrieve group in the repo for the diatomic & charge
+    diagp = repo.require_group(build_base(m, nm, chg))
 
     # Get the max multiplicity for the diatomic and store
     max_mult = max_unpaired[m] + max_unpaired[nm] + 1 - chg
-    diagp.create_dataset(name=h5_names.max_mult, \
+    if not h5_names.max_mult in diagp:
+        diagp.create_dataset(name=h5_names.max_mult, \
                                         data=max_mult)
-
-    # Initialize the reporter variables for converged opts
-##    last_mult = 0
-##    last_base = None
+    ## end if
 
     # Loop over multiplicities, optimizing, until minimum mult is reached
     for mult in range(max_mult, -(max_mult % 2), -2):
-        # Create multiplicity subgroup in repo
-        mgp = diagp.create_group(h5_names.mult_prfx + str(mult))
+        # Drop to next multiplicity if not to be run
+        if startvals != None:
+            if mult > startvals[0]:
+                continue
+            ## end if
+        ## end if
+
+        # Create/retrieve multiplicity subgroup in repo
+        mgp = diagp.require_group(h5_names.mult_prfx + str(mult))
 
         # Loop over reference multiplicities, from max_mult to current mult
         for ref in range(max_mult, mult-2, -2):
-            # Create ref multiplicity subgroup
-            rgp = mgp.create_group(h5_names.ref_prfx + str(ref))
+            # Drop to next ref if not to be run
+            if startvals != None:
+                if ref > startvals[1]:
+                    continue
+                ## end if
+            ## end if
+
+            # Create/retrieve ref multiplicity subgroup
+            rgp = mgp.require_group(h5_names.ref_prfx + str(ref))
 
             # Set & write base string to repo
             base = build_base(m, nm, chg, mult, ref)
-            rgp.create_dataset(name=h5_names.run_base, data=base)
+            if not h5_names.run_base in rgp:
+                rgp.create_dataset(name=h5_names.run_base, data=base)
+            ## end if
 
             # If ref is the same as mult, then start fresh. Otherwise, insist
             #  on starting from a prior wavefunction.
@@ -651,12 +719,14 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                     sleep(pausetime)
                 ## loop
 
+                #TODO: Revise below to clobber any prior results in the repo
+
                 # Try all convergers with SLOWCONV, clearing temp
                 #  files first
                 clear_tmp(base)
                 oo = exor(template_str, os.getcwd(), [exec_cmd, base], \
                         sim_name=base, \
-                        subs=[('OPT', str(opt)), \
+                        subs=[('OPT', str(opt_str)), \
                             ('CONV', conv + "\n! SLOWCONV"), \
                             ('MULT', str(mult)), \
                             ('CHARGE', str(chg)), \
@@ -676,8 +746,6 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                     rgp.create_dataset(name=h5_names.converger, data= \
                                 (conv if conv != "" else "default") + \
                                 " & SLOWCONV")
-##                    last_mult = mult
-##                    last_base = base
                     break  ## for conv in convergers
                 else:
                     logger.warning(base + " opt did not converge using " + \
@@ -721,8 +789,6 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                         rgp.create_dataset(name=h5_names.converger, data= \
                                 good_opt_conv.replace('\n', " & ") \
                                             .replace("!"," ") + " & NUMFREQ")
-##                        last_mult = mult
-##                        last_base = base
                     else:
                         # Log failure and return.
                         logger.error(base + \
@@ -769,6 +835,8 @@ def store_run_results(rgp, oo, xyz):
     from opan.const import PHYS
     #TODO: Expand data stored in store_run_results as ORCA_OUTPUT expanded
     # Store the data, overwriting if it exists
+    #TODO: Implement a check for undesirable data here, passing a flag to
+    #  calling function to indicate need to halt the particular diatomic.
     rgp.require_dataset(name=h5_names.out_en, \
                                 shape=(), \
                                 dtype=np.float_, \
@@ -959,7 +1027,7 @@ def build_moread(m, nm, chg, mult, ref=None):
 ## end def build_moread
 
 
-def build_base(m, nm, chg, mult, ref=None):
+def build_base(m, nm, chg, mult=None, ref=None):
     """ #DOC: build_base docstring
     """
 
@@ -967,8 +1035,8 @@ def build_base(m, nm, chg, mult, ref=None):
     from opan.const import atomSym
 
     base_str = atomSym[m].capitalize() + atomSym[nm].capitalize() + sep + \
-                h5_names.chg_prfx + str(chg) + \
-                h5_names.mult_prfx + str(mult) + \
+                h5_names.chg_prfx + ("_" if chg < 0 else "") + str(abs(chg)) + \
+                (h5_names.mult_prfx + str(mult) if mult != None else "") + \
                 (h5_names.ref_prfx + str(ref) if ref != None else "")
 
     return base_str
@@ -996,6 +1064,17 @@ def safe_retr(group, dataname, errdesc, log_absent=True):
     return workvar
 
 ## end def safe_retr
+
+
+def proof_template(template_str):
+
+    for tag in req_tag_strs:
+        if template_str.find(tag) == -1:
+            raise(ValueError("'" + tag + "' tag absent from template."))
+        ## end if
+    ## next tag
+
+## end def proof_template
 
 
 def setup_logger():
@@ -1035,6 +1114,53 @@ def setup_logger():
 ## end def setup_logger
 
 
+def continue_tuple(tupstr):
+    """ #DOC: continue_tuple docstring
+    """
+
+    # Imports
+    import argparse
+    from opan.const import atomSym
+
+    # Ensure enclosing parentheses
+    workstr = ('(' if tupstr[0] != '(' else "") + \
+                tupstr + \
+                (')' if tupstr[-1] != ')' else "")
+
+    # Try the tuple strip-and-split conversion
+    try:
+        out_tup = tuple(map(int,workstr[1:-1].split(',')))
+    except:
+        msg = '"' + tupstr + '" is not a tuple of integers'
+        raise(argparse.ArgumentTypeError(msg))
+    ## end try
+
+    # Must be length five
+    if not len(out_tup) == 5:
+        msg = 'Argument must contain five integers: "' + tupstr + '"'
+        raise(argparse.ArgumentTypeError(msg))
+    ## end if
+
+    # Must be an implemented metal
+    if not out_tup[0] in metals:
+        msg = "Metal '" + str(out_tup[0]) + "' (" + atomSym[out_tup[0]] + \
+                            ") not implemented"
+        raise(argparse.ArgumentTypeError(msg))
+    ## end if
+
+    # Must be an implemented nonmetal
+    if not out_tup[1] in nonmetals:
+        msg = "Nonmetal '" + str(out_tup[1]) + "' (" + atomSym[out_tup[1]] + \
+                            ") not implemented"
+        raise(argparse.ArgumentTypeError(msg))
+    ## end if
+
+    # Return the tuple
+    return out_tup
+
+## end def continue_tuple
+
+
 if __name__ == '__main__':
 
     # Imports
@@ -1050,6 +1176,7 @@ if __name__ == '__main__':
     CATION_NMS = 'cation_nms'
     INIT_SEP_DIA = 'init_sep_dia'
     SKIP_ATOMS = 'skip_atoms'
+    CONT_DIA = 'continue_dia'
 
     # Create the parser
     prs = ap.ArgumentParser(description="Perform Jensen diatomics " + \
@@ -1059,6 +1186,15 @@ if __name__ == '__main__':
 
     # Template file argument
     prs.add_argument(TMPLT_FILE, help="Name of input template file")
+
+    # Continuing an errored-out diatomic
+    prs.add_argument("--" + CONT_DIA, help="Tuple of information to resume " + \
+                                    "computation of a halted diatomic.\n" + \
+                                    "Format: (m, nm, chg, mult, ref), " + \
+                                    "where 'mult' and 'ref' are the " + \
+                                    "values at which to restart computation.",
+                                metavar="TUPLE", type=continue_tuple, \
+                                default=None)
 
     # Working directory argument
     prs.add_argument("--" + WKDIR, help="Path to working directory with " + \
@@ -1086,6 +1222,8 @@ if __name__ == '__main__':
                 "monopositive cations; pass as " + \
                 "stringified array of atomic numbers (e.g., '[1, 8]'; " + \
                 "this is the default). Any nonmetals are valid.", default=None)
+
+    # Twiddlers for execution settings
     prs.add_argument("--" + INIT_SEP_DIA, help="Initial separation between " + \
                 "atoms in diatomic computations, in Angstroms. " + \
                 "Default is " + str(init_dia_sep) + " Angstroms.", default=None)
@@ -1120,8 +1258,15 @@ if __name__ == '__main__':
     ## end if
     skip_atoms = bool(params[SKIP_ATOMS])
 
-    # Execute the run
-    do_run(params[TMPLT_FILE], wkdir=params[WKDIR])
+    # Check for whether a diatomic restart was requested
+    if params[CONT_DIA] == None:
+        # Execute the run
+        do_run(params[TMPLT_FILE], wkdir=params[WKDIR])
+    else:
+        # Execute a diatomic restart
+        continue_dia(params[TMPLT_FILE], *params[CONT_DIA], \
+                        wkdir=params[WKDIR])
+    ## end if
 
 ## end if main
 
