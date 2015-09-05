@@ -24,7 +24,6 @@ import h5py as h5, numpy as np
 
 
 # Module-level variables
-logfname = 'jensen_log.txt'
 repofname = 'jensen.h5'
 csvfname = 'jensen.csv'
 csv_multfname = 'jensen_mult.csv'
@@ -40,6 +39,16 @@ pausetime = 2.0
 sep = "_"
 NA_str = "NA"
 skip_atoms = False
+
+# Class for logging information
+class log_names(object):
+    filename = 'jensen_log.txt'
+    fmt = "%(levelname)-8s [%(asctime)s] %(message)s"
+    datefmt = "%H:%M:%S"
+    loggername = 'rjLogger'
+    handlername = 'rjHandler'
+    formattername = 'rjFormatter'
+## end class log_names
 
 # Class for names of subgroups
 class h5_names(object):
@@ -101,16 +110,16 @@ def do_run(template_file, wkdir=None, \
         template_str = f.read()
     ## end with
 
-    # Create working folder, enter, create the log, and log wkdir
+    # Create working folder, enter
     dir_name = time.strftime(dir_fmt)
     os.mkdir(dir_name)
     os.chdir(dir_name)
-    logging.basicConfig(filename=os.path.join(os.getcwd(),logfname), \
-                level=logging.INFO, \
-                format="%(levelname)-8s [%(asctime)s] %(message)s", \
-                datefmt="%H:%M:%S")
-    logging.info("Jensen calc series started: " + time.strftime("%c"))
-    logging.info("Working in directory: " + os.getcwd())
+
+    # Set up and create the log, and log wkdir
+    setup_logger()
+    logger = logging.getLogger(log_names.loggername)
+    logger.info("Jensen calc series started: " + time.strftime("%c"))
+    logger.info("Working in directory: " + os.getcwd())
 
     # Proofread the template
     tag_strs = ['<MOREAD>', '<MULT>', '<XYZ>', '<OPT>', '<CONV>', \
@@ -122,24 +131,24 @@ def do_run(template_file, wkdir=None, \
     ## next tag
 
     # Log the template file contents
-    logging.info("Template file '" + template_file + "' contents:\n\n" + \
+    logger.info("Template file '" + template_file + "' contents:\n\n" + \
                                                                 template_str)
 
     # Log the metals and nonmetals to be processed, including those
     #  nonmetals for which the monocations will be calculated.
     logging.info("Metals: " + ", ".join([atomSym[a].capitalize() \
                                                     for a in metals]))
-    logging.info("Non-metals: " + ", ".join([atomSym[a].capitalize() \
+    logger.info("Non-metals: " + ", ".join([atomSym[a].capitalize() \
                                                     for a in nonmetals]))
-    logging.info("Cations calculated for non-metals: " + \
+    logger.info("Cations calculated for non-metals: " + \
                     ", ".join([atomSym[a].capitalize() for a in cation_nms]))
 
     # Log the geometry scale-down factor, if used
     if fixed_dia_sep:
-        logging.info("Using fixed initial diatomic separation of " + \
+        logger.info("Using fixed initial diatomic separation of " + \
                 str(init_dia_sep) + " Angstroms.")
     else:
-        logging.info("Using geometry scale-down factor: " + str(geom_scale))
+        logger.info("Using geometry scale-down factor: " + str(geom_scale))
     ## end if
 
     # Store the starting time
@@ -150,7 +159,7 @@ def do_run(template_file, wkdir=None, \
 
     # Log notice if skipping atoms
     if skip_atoms:
-        logging.warning("SKIPPING ATOM COMPUTATIONS PER SCRIPT FLAG")
+        logger.warning("SKIPPING ATOM COMPUTATIONS")
     else:
         # Loop atoms (atomic calculations)
         for at in metals.union(nonmetals):
@@ -186,7 +195,7 @@ def do_run(template_file, wkdir=None, \
 
     # Generate the results csv
     write_csv(repo)
-    logging.info("CSV file generated.")
+    logger.info("CSV file generated.")
 
     # Close the repository
     repo.close()
@@ -200,8 +209,8 @@ def do_run(template_file, wkdir=None, \
     ## end if
 
     # Log end of execution
-    logging.info("Calc series ended: " + time.strftime("%c"))
-    logging.info("Total elapsed time: " + \
+    logger.info("Calc series ended: " + time.strftime("%c"))
+    logger.info("Total elapsed time: " + \
                                     make_timestamp(time.time() - start_time))
 
 
@@ -407,7 +416,10 @@ def run_mono(at, template_str, repo, exec_cmd):
     from opan.const import atomSym, PHYS
     from opan.utils import execute_orca as exor
     from time import sleep
-    import os
+    import os, logging
+
+    # Retrieve the logger
+    logger = logging.getLogger(log_names.loggername)
 
     # Create the group for the atom in the repository
     atgp = repo.create_group(atomSym[at].capitalize())
@@ -438,13 +450,13 @@ def run_mono(at, template_str, repo, exec_cmd):
 
             # Check if completed and converged
             if oo.completed and oo.converged:
-                logging.info(base + " converged using " + \
+                logger.info(base + " converged using " + \
                                 (conv if conv <> "" else "default"))
                 mgp.create_dataset(name=h5_names.converger, data= \
                                 (conv if conv <> "" else "default"))
                 break
             else:
-                logging.warning(base + " did not converge using " + \
+                logger.warning(base + " did not converge using " + \
                                 (conv if conv <> "" else "default"))
             ## end if
 
@@ -458,7 +470,7 @@ def run_mono(at, template_str, repo, exec_cmd):
 
             # Again, check if completed / converged
             if oo.completed and oo.converged:
-                logging.info(base + " converged using " + \
+                logger.info(base + " converged using " + \
                                 (conv if conv <> "" else "default") + \
                                 " & SLOWCONV")
                 mgp.create_dataset(name=h5_names.converger, data= \
@@ -466,14 +478,14 @@ def run_mono(at, template_str, repo, exec_cmd):
                                 " & SLOWCONV")
                 break
             else:
-                logging.warning(base + " did not converge using " + \
+                logger.warning(base + " did not converge using " + \
                                 (conv if conv <> "" else "default") + \
                                 " & SLOWCONV")
             ## end if
         else:
             # If never broken, then the whole series of computations failed.
             #  Log and skip to next multiplicity.
-            logging.critical(base + " failed to converge in all computations.")
+            logger.error(base + " failed to converge in all computations.")
             mgp.create_dataset(name=h5_names.converger, data="FAILED")
             continue
         ## next conv
@@ -520,12 +532,10 @@ def run_mono(at, template_str, repo, exec_cmd):
     mgp = atgp.get(h5_names.mult_prfx + str(min_mult))
 
     # If any computation succeeded, *something* will be retrievable. If none
-    #  did, mgp will be None; report critical error if so.
+    #  did, mgp will be None; report error if so.
     if mgp == None:
-        logging.critical("All computations failed for " + \
+        logger.error("All computations failed for " + \
                 atomSym[at].capitalize())
-        #TODO: Implement storing of failure values, depending on implementation
-        #  needs in the encapsulating code.
     else:
         atgp.create_dataset(name=h5_names.min_en_zpe, \
                             data=mgp.get(h5_names.out_zpe).value)
@@ -550,8 +560,11 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
     from opan.const import atomSym, PHYS
     from opan.utils import execute_orca as exor
     from opan.xyz import OPAN_XYZ as XYZ
-    import os
+    import os, logging
     from time import sleep
+
+    # Retrieve logger
+    logger = logging.getLogger(log_names.loggername)
 
     # Create group in the repo for the diatomic & charge
     diagp = repo.create_group(atomSym[m].capitalize() + \
@@ -645,7 +658,7 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                 # Check if completed, converged and optimized; store 'last_'
                 #  variables and break if so
                 if oo.completed and oo.converged and oo.optimized:
-                    logging.info(base + " opt converged from '" + \
+                    logger.info(base + " opt converged from '" + \
                                 ("model" if ref == mult else \
                                         build_base(m, nm, chg, ref)) + \
                                 "' using " + \
@@ -658,7 +671,7 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
 ##                    last_base = base
                     break  ## for conv in convergers
                 else:
-                    logging.warning(base + " opt did not converge using " + \
+                    logger.warning(base + " opt did not converge using " + \
                                     (conv if conv != "" else "default") + \
                                     " & SLOWCONV")
 
@@ -690,7 +703,7 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                     #  multiplicity.
                     if oo.completed and oo.converged and oo.optimized:
                         good_opt_conv = "! KDIIS \n! SLOWCONV "
-                        logging.info(base + " opt converged from '" + \
+                        logger.info(base + " opt converged from '" + \
                                 ("model" if mult == ref else \
                                         build_base(m, nm, chg, ref)) + \
                                 "' using " + \
@@ -702,8 +715,8 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
 ##                        last_mult = mult
 ##                        last_base = base
                     else:
-                        # Log critical failure and return.
-                        logging.critical(base + \
+                        # Log failure and return.
+                        logger.error(base + \
                                 " opt failed to converge in all computations.")
                         mgp.create_dataset(name=h5_names.converger, \
                                                             data="FAILED")
@@ -712,8 +725,8 @@ def run_dia(m, nm, chg, template_str, opt, repo, exec_cmd, geom_scale):
                         return
                     ## end if run succeeded
                 else:
-                    #  Log critical failure and return.
-                    logging.critical(base + \
+                    #  Log failure and return.
+                    logger.error(base + \
                                 " opt failed to converge in all computations.")
                     rgp.create_dataset(name=h5_names.converger, data="FAILED")
 
@@ -958,11 +971,15 @@ def safe_retr(group, dataname, errdesc, log_absent=True):
     """ #DOC: docstring for safe_retr
     """
 
+    # Imports
+    import logging
+
     try:
         workvar = group.get(dataname).value
     except AttributeError:
         if log_absent:
-            logging.critical(errdesc + " absent from repository.")
+            logging.getLogger(log_names.loggername) \
+                    .error(errdesc + " absent from repository.")
         ## end if
         workvar = NA_str
     ## end try
@@ -970,6 +987,43 @@ def safe_retr(group, dataname, errdesc, log_absent=True):
     return workvar
 
 ## end def safe_retr
+
+
+def setup_logger():
+    """ #DOC: setup_logger docstring
+    """
+
+    # Imports
+    import logging, logging.config
+
+    # Define the configuration dictionary
+    dictLogConfig = {
+        "version": 1,
+        "loggers": {
+            log_names.loggername: {
+                "handlers": [log_names.handlername],
+                "level": "INFO"
+                }
+            },
+        "handlers": {
+            log_names.handlername: {
+                "class": "logging.FileHandler",
+                "formatter": log_names.formattername,
+                "filename": os.path.join(os.getcwd(),log_names.filename)
+                }
+            },
+        "formatters": {
+            log_names.formattername: {
+                "format": log_names.fmt,
+                "datefmt": log_names.datefmt
+                }
+            }
+        }
+
+    # Apply the config
+    logging.config.dictConfig(dictLogConfig)
+
+## end def setup_logger
 
 
 if __name__ == '__main__':
