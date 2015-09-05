@@ -24,20 +24,24 @@ import h5py as h5, numpy as np
 
 
 # Module-level variables
+# Constant strings
 repofname = 'jensen.h5'
 csvfname = 'jensen.csv'
 csv_multfname = 'jensen_mult.csv'
 pausefname = 'pause'
 dir_fmt = 'jensen_%Y%m%d_%H%M%S'
-ORCA_EXEC = 'runorca_pal.bat'
-OPT_DEFAULT = '! TIGHTOPT'
+sep = "_"
+NA_str = "NA"
+
+# Adjustable parameters (not all actually are adjustable yet)
+exec_cmd = 'runorca_pal.bat'
+opt_str = '! TIGHTOPT'
 convergers = ["", "! KDIIS", "! SOSCF"] #, "! NRSCF"]
 init_dia_sep = 2.1  # Angstroms
 fixed_dia_sep = True
 ditch_sep_thresh = 4.0
+geom_scale = 0.75
 pausetime = 2.0
-sep = "_"
-NA_str = "NA"
 skip_atoms = False
 
 # Class for logging information
@@ -86,10 +90,7 @@ max_unpaired = {1: 1, 6: 4, 7: 3, 8: 2, 9: 1, 16: 4, 17: 1, 35: 1, \
 mult_range = range(1,13)
 
 
-def do_run(template_file, wkdir=None, \
-            opt_str=OPT_DEFAULT, \
-            exec_cmd=ORCA_EXEC, \
-            geom_scale=0.75):
+def do_run(template_file, wkdir=None):
     """ Top-level function for doing a series of runs
 
     """
@@ -136,7 +137,7 @@ def do_run(template_file, wkdir=None, \
 
     # Log the metals and nonmetals to be processed, including those
     #  nonmetals for which the monocations will be calculated.
-    logging.info("Metals: " + ", ".join([atomSym[a].capitalize() \
+    logger.info("Metals: " + ", ".join([atomSym[a].capitalize() \
                                                     for a in metals]))
     logger.info("Non-metals: " + ", ".join([atomSym[a].capitalize() \
                                                     for a in nonmetals]))
@@ -212,6 +213,14 @@ def do_run(template_file, wkdir=None, \
     logger.info("Calc series ended: " + time.strftime("%c"))
     logger.info("Total elapsed time: " + \
                                     make_timestamp(time.time() - start_time))
+
+## end def do_run
+
+
+def continue_dia(m, nm, chg, mult, ref, template_file, wkdir=None):
+    pass
+
+## end def continue_dia
 
 
 def write_csv(repo):
@@ -1045,7 +1054,8 @@ if __name__ == '__main__':
     # Create the parser
     prs = ap.ArgumentParser(description="Perform Jensen diatomics " + \
                 "calculation series.\n\nBackground execution with " + \
-                "stderr redirected to a file or to /dev/null")
+                "stderr redirected to a file or to /dev/null " + \
+                "is recommended.")
 
     # Template file argument
     prs.add_argument(TMPLT_FILE, help="Name of input template file")
@@ -1057,11 +1067,11 @@ if __name__ == '__main__':
 
     # Execution script
     prs.add_argument("--" + EXEC, help="ORCA execution command (default: " + \
-                    ORCA_EXEC + ")", default=ORCA_EXEC)
+                    exec_cmd + ")", default=None)
 
     # OPT command
     prs.add_argument("--" + OPT, help="Optimization settings for diatomics " + \
-                "(default: '" + OPT_DEFAULT + "')", default=OPT_DEFAULT)
+                "(default: '" + opt_str + "')", default=None)
 
     # Overwrites of metals and nonmetals (incl cation ones)
     prs.add_argument("--" + METALS, help="Metals to run; pass as " + \
@@ -1102,13 +1112,16 @@ if __name__ == '__main__':
     if not params[INIT_SEP_DIA] == None:
         init_dia_sep = float(params[INIT_SEP_DIA])
     ## end if
+    if not params[OPT] == None:
+        opt_str = OPT
+    ## end if
+    if not params[EXEC] == None:
+        exec_cmd = EXEC
+    ## end if
     skip_atoms = bool(params[SKIP_ATOMS])
 
     # Execute the run
-    do_run(params[TMPLT_FILE], \
-            wkdir=params[WKDIR], \
-            opt_str=params[OPT], \
-            exec_cmd=params[EXEC])
+    do_run(params[TMPLT_FILE], wkdir=params[WKDIR])
 
 ## end if main
 
