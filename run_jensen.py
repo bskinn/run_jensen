@@ -230,7 +230,8 @@ def continue_dia(template_file, m, nm, chg, mult, ref, wkdir=None):
     # Set up and create the log, and log wkdir
     setup_logger()
     logger = logging.getLogger(log_names.loggername)
-    logger.info("Jensen calc series started: " + time.strftime("%c"))
+    logger.info("============  RESTART  ============")
+    logger.info("Jensen calc series resumed: " + time.strftime("%c"))
     logger.info("Working in directory: " + os.getcwd())
 
     # Proofread the template
@@ -312,10 +313,8 @@ def write_csv(repo):
 
                 # Group links; all store None if group is not present.
                 nm_gp = repo.get(nm_name)
-                dia_gp = repo.get(m_name + nm_name + sep + \
-                                                    h5_names.chg_prfx + "0")
-                ion_gp = repo.get(m_name + nm_name + sep + \
-                                                    h5_names.chg_prfx + "1")
+                dia_gp = repo.get(build_base(m, nm, 0))
+                ion_gp = repo.get(build_base(m, nm, 1))
 
                 # Pull data, if present, and calculate results
                 # Energies
@@ -487,25 +486,29 @@ def run_mono(at, template_str, repo):
     # Retrieve the logger
     logger = logging.getLogger(log_names.loggername)
 
-    # Create the group for the atom in the repository
-    atgp = repo.create_group(atomSym[at].capitalize())
+    # Create/retrieve the group for the atom in the repository
+    atgp = repo.require_group(atomSym[at].capitalize())
 
     # Get the max multiplicity for the atom and store
     max_mult = max_unpaired[at] + 1
-    atgp.create_dataset(name=h5_names.max_mult, \
-                        data=max_mult)
+    h5_clobber_dataset(atgp, name=h5_names.max_mult, data=max_mult, \
+                                                    log_clobber=True)
 
     # Loop until at minimum possible multiplicity
     for mult in range(max_mult, -(max_mult % 2), -2):
-        # Create multiplicity subgroup
-        mgp = atgp.create_group(h5_names.mult_prfx + str(mult))
+        # Create/retrieve multiplicity subgroup
+        mgp = atgp.require_group(h5_names.mult_prfx + str(mult))
 
         # Define and store run base string
         base = atomSym[at].capitalize() + sep + str(mult)
-        mgp.create_dataset(name=h5_names.run_base, data=base)
+        h5_clobber_dataset(mgp,name=h5_names.run_base, data=base, \
+                                                        log_clobber=True)
 
         # Try executing, iterating through the convergers
         for conv in convergers:
+            # Store converger reporting name
+            conv_name = conv if conv != "" else "default"
+
             # Run the calc, storing the ORCA_OUTPUT object
             oo = exor(template_str, os.getcwd(), [exec_cmd, base], \
                     sim_name=base, \
@@ -516,17 +519,16 @@ def run_mono(at, template_str, repo):
 
             # Check if completed and converged
             if oo.completed and oo.converged:
-                logger.info(base + " converged using " + \
-                                (conv if conv <> "" else "default"))
-                mgp.create_dataset(name=h5_names.converger, data= \
-                                (conv if conv <> "" else "default"))
+                logger.info(base + " converged using " + conv_name)
+                h5_clobber_dataset(mgp,name=h5_names.converger, \
+                                        data=conv_name, log_clobber=True)
                 break
             else:
-                logger.warning(base + " did not converge using " + \
-                                (conv if conv <> "" else "default"))
+                logger.warning(base + " did not converge using " + conv_name)
             ## end if
 
             # Run again, with SLOWCONV
+            conv_name += " & SLOWCONV"
             oo = exor(template_str, os.getcwd(), [exec_cmd, base], \
                     sim_name=base, \
                     subs=[('OPT', ''), ('CONV', conv + "\n! SLOWCONV"), \
@@ -536,33 +538,32 @@ def run_mono(at, template_str, repo):
 
             # Again, check if completed / converged
             if oo.completed and oo.converged:
-                logger.info(base + " converged using " + \
-                                (conv if conv <> "" else "default") + \
-                                " & SLOWCONV")
-                mgp.create_dataset(name=h5_names.converger, data= \
-                                (conv if conv <> "" else "default") + \
-                                " & SLOWCONV")
+                logger.info(base + " converged using " + conv_name)
+                h5_clobber_dataset(mgp,name=h5_names.converger, \
+                                        data=conv_name, log_clobber=True)
                 break
             else:
-                logger.warning(base + " did not converge using " + \
-                                (conv if conv <> "" else "default") + \
-                                " & SLOWCONV")
+                logger.warning(base + " did not converge using " + conv_name)
             ## end if
         else:
             # If never broken, then the whole series of computations failed.
             #  Log and skip to next multiplicity.
             logger.error(base + " failed to converge in all computations.")
-            mgp.create_dataset(name=h5_names.converger, data="FAILED")
-            continue
+            h5_clobber_dataset(mgp,name=h5_names.converger, \
+                                        data="FAILED", log_clobber=True)
+            continue  ## to next mult
         ## next conv
 
         # Store useful outputs
-        mgp.create_dataset(name=h5_names.out_en, \
-                                data=oo.en_last()[oo.EN_SCFFINAL])
-        mgp.create_dataset(name=h5_names.out_zpe, \
-                                data=oo.thermo[oo.THERMO_E_ZPE])
-        mgp.create_dataset(name=h5_names.out_enth, \
-                                data=oo.thermo[oo.THERMO_H_IG])
+        storage_data = (
+                (h5_names.converger, conv_name),
+                (h5_names.out_en, oo.en_last()[oo.EN_SCFFINAL]),
+                (h5_names.out_zpe, oo.thermo[oo.THERMO_E_ZPE]),
+                (h5_names.out_enth, oo.thermo[oo.THERMO_H_IG])
+                        )
+        for item in storage_data:
+            h5_clobber_dataset(mgp,name=item[0], data=item[1], log_clobber=True)
+        ## next item
     ## next mult
 
     # Initialize the minimum energy to zero, which everything should be less
@@ -575,9 +576,9 @@ def run_mono(at, template_str, repo):
     for g in atgp.values():
         # Check if a given value is a group and that its name matches the
         #  pattern expected of a multiplicity group
-        if isinstance(g, h5.Group) and p_multgrp.search(g.name) <> None:
+        if isinstance(g, h5.Group) and p_multgrp.search(g.name) != None:
             # Confirm energy value exists
-            if not g.get(h5_names.out_en) == None:
+            if g.get(h5_names.out_en) != None:
                 # Check if the reported SCF final energy is less than the
                 #  current minimum.
                 if g.get(h5_names.out_en).value < min_en:
@@ -591,8 +592,10 @@ def run_mono(at, template_str, repo):
 
     # Store the minimum energy and multiplicity, and retrieve/store the other
     #  thermo values
-    atgp.create_dataset(name=h5_names.min_en, data=min_en)
-    atgp.create_dataset(name=h5_names.min_en_mult, data=min_mult)
+    h5_clobber_dataset(atgp, name=h5_names.min_en, data=min_en, \
+                                                        log_clobber=True)
+    h5_clobber_dataset(atgp, name=h5_names.min_en_mult, data=min_mult, \
+                                                        log_clobber=True)
 
     # Try to retrieve the appropriate group
     mgp = atgp.get(h5_names.mult_prfx + str(min_mult))
@@ -603,10 +606,10 @@ def run_mono(at, template_str, repo):
         logger.error("All computations failed for " + \
                 atomSym[at].capitalize())
     else:
-        atgp.create_dataset(name=h5_names.min_en_zpe, \
-                            data=mgp.get(h5_names.out_zpe).value)
-        atgp.create_dataset(name=h5_names.min_en_enth, \
-                            data=mgp.get(h5_names.out_enth).value)
+        h5_clobber_dataset(atgp, name=h5_names.min_en_zpe, \
+                    data=mgp.get(h5_names.out_zpe).value, log_clobber=True)
+        h5_clobber_dataset(atgp, name=h5_names.min_en_enth, \
+                    data=mgp.get(h5_names.out_enth).value, log_clobber=True)
     ## end if
 
     # Pause if indicator file present
@@ -636,9 +639,8 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 
     # Get the max multiplicity for the diatomic and store
     max_mult = max_unpaired[m] + max_unpaired[nm] + 1 - chg
-    if not h5_names.max_mult in diagp:
-        diagp.create_dataset(name=h5_names.max_mult, \
-                                        data=max_mult)
+    h5_clobber_dataset(diagp, name=h5_names.max_mult, data=max_mult, \
+                                                        log_clobber=True)
     ## end if
 
     # Loop over multiplicities, optimizing, until minimum mult is reached
@@ -667,9 +669,8 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 
             # Set & write base string to repo
             base = build_base(m, nm, chg, mult, ref)
-            if not h5_names.run_base in rgp:
-                rgp.create_dataset(name=h5_names.run_base, data=base)
-            ## end if
+            h5_clobber_dataset(rgp, name=h5_names.run_base, data=base, \
+                                                            log_clobber=True)
 
             # If ref is the same as mult, then start fresh. Otherwise, insist
             #  on starting from a prior wavefunction.
@@ -701,13 +702,10 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                     ## end if
                 ## end if
             else:
-                # Build from scratch
+                # Build from scratch if ref == mult
                 moread_str = "! NOAUTOSTART"
                 xyz_str = def_dia_xyz(m, nm)
             ## end if
-
-            # Reset the 'good convergence' info bit to None
-            good_opt_conv = None
 
             # Try executing, looping across convergers. Should probably use a
             #  very small number for %geom MaxIter and perhaps consider a
@@ -719,7 +717,8 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                     sleep(pausetime)
                 ## loop
 
-                #TODO: Revise below to clobber any prior results in the repo
+                # Update the reporting name for the converger
+                conv_name = conv + " & SLOWCONV"
 
                 # Try all convergers with SLOWCONV, clearing temp
                 #  files first
@@ -733,6 +732,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                             ('MOREAD', moread_str), \
                             ('XYZ', xyz_str)
                             ])[0]
+                            ## [0] here b/c execute returns a tuple of objects
 
                 # Check if completed, converged and optimized; store 'last_'
                 #  variables and break if so
@@ -740,18 +740,13 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                     logger.info(base + " opt converged from '" + \
                                 ("model" if ref == mult else \
                                         build_base(m, nm, chg, ref)) + \
-                                "' using " + \
-                                (conv if conv != "" else "default") + \
-                                " & SLOWCONV")
-                    rgp.create_dataset(name=h5_names.converger, data= \
-                                (conv if conv != "" else "default") + \
-                                " & SLOWCONV")
+                                "' using " + conv_name)
+                    h5_clobber_dataset(rgp, name=h5_names.converger, \
+                                        data=conv_name, log_clobber=True)
                     break  ## for conv in convergers
                 else:
                     logger.warning(base + " opt did not converge using " + \
-                                    (conv if conv != "" else "default") + \
-                                    " & SLOWCONV")
-
+                                    conv_name)
                 ## end if
 
             else:  ## on for conv in convergers:
@@ -766,9 +761,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                             os.getcwd(), [exec_cmd, base], \
                             sim_name=base, \
                             subs=[('OPT', str(opt)), \
-                                ('CONV', \
-                                    (good_opt_conv if good_opt_conv != None \
-                                            else "! KDIIS \n! SLOWCONV ") ), \
+                                ('CONV', "! KDIIS \n! SLOWCONV "), \
                                 ('MULT', str(mult)), \
                                 ('CHARGE', str(chg)), \
                                 ('MOREAD', moread_str), \
@@ -779,22 +772,19 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                     #  variables if so; if not, log and skip to next
                     #  multiplicity.
                     if oo.completed and oo.converged and oo.optimized:
-                        good_opt_conv = "! KDIIS \n! SLOWCONV "
                         logger.info(base + " opt converged from '" + \
                                 ("model" if mult == ref else \
                                         build_base(m, nm, chg, ref)) + \
-                                "' using " + \
-                                good_opt_conv.replace('\n', " & ") \
-                                            .replace("! ","") + " & NUMFREQ")
-                        rgp.create_dataset(name=h5_names.converger, data= \
-                                good_opt_conv.replace('\n', " & ") \
-                                            .replace("!"," ") + " & NUMFREQ")
+                                "' using KDIIS & SLOWCONV & NUMFREQ")
+                        h5_clobber_dataset(rgp, name=h5_names.converger, \
+                                    data="KDIIS & SLOWCONV & NUMFREQ", \
+                                    log_clobber=True)
                     else:
                         # Log failure and return.
                         logger.error(base + \
                                 " opt failed to converge in all computations.")
-                        mgp.create_dataset(name=h5_names.converger, \
-                                                            data="FAILED")
+                        h5_clobber_dataset(rgp, name=h5_names.converger, \
+                                            data="FAILED", log_clobber=True)
 
                         # Skip remainder of processing of this diatomic
                         return
@@ -803,7 +793,8 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                     #  Log failure and return.
                     logger.error(base + \
                                 " opt failed to converge in all computations.")
-                    rgp.create_dataset(name=h5_names.converger, data="FAILED")
+                    h5_clobber_dataset(rgp, name=h5_names.converger, \
+                                            data="FAILED", log_clobber=True)
 
                     # Skip remainder of processing of this diatomic
                     return
@@ -812,7 +803,8 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 
             # Store useful outputs to repo - bond length, final energy, HESS
             #  stuff, dipole moment
-            store_run_results(rgp, oo, XYZ(path=(base + ".xyz")))
+            store_run_results(rgp, oo, XYZ(path=(base + ".xyz")), \
+                                                        log_clobber=True)
 
         ## next ref
 
@@ -822,51 +814,43 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
     #  May be inaccurate if key runs fail. parse_mults created to allow re-
     #  running after the fact, once such key runs have been tweaked manually
     #  to re-run satisfactorily.
-    parse_mults(diagp, do_logging=True)
+    parse_mults(diagp, log_clobber=True)
 
 ## end def run_dia
 
 
-def store_run_results(rgp, oo, xyz):
+def store_run_results(rgp, oo, xyz, log_clobber=False):
     """ #DOC: store_mult_results docstring
     """
 
     # Imports
     from opan.const import PHYS
     #TODO: Expand data stored in store_run_results as ORCA_OUTPUT expanded
-    # Store the data, overwriting if it exists
-    #TODO: Implement a check for undesirable data here, passing a flag to
+
+    #TODO: Implement check(s) for undesirable data here, passing a flag to
     #  calling function to indicate need to halt the particular diatomic.
-    rgp.require_dataset(name=h5_names.out_en, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                                data=oo.en_last()[oo.EN_SCFFINAL])
-    rgp.require_dataset(name=h5_names.out_zpe, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                                data=oo.thermo[oo.THERMO_E_ZPE])
-    rgp.require_dataset(name=h5_names.out_enth, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                                data=oo.thermo[oo.THERMO_H_IG])
-    rgp.require_dataset(name=h5_names.out_dipmom, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                                data=oo.dipmoms[-1])
-    rgp.require_dataset(name=h5_names.out_bondlen, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                            data=(PHYS.Ang_per_Bohr * xyz.Dist_single(0,0,1)))
+
+    # Store the data, overwriting if it exists
+    storage_data = (
+                (h5_names.out_en, oo.en_last()[oo.EN_SCFFINAL]),
+                (h5_names.out_zpe, oo.thermo[oo.THERMO_E_ZPE]),
+                (h5_names.out_enth, oo.thermo[oo.THERMO_H_IG]),
+                (h5_names.out_dipmom, oo.dipmoms[-1]),
+                (h5_names.out_bondlen, \
+                                PHYS.Ang_per_Bohr * xyz.Dist_single(0,0,1))
+                        )
+    for item in storage_data:
+        h5_clobber_dataset(rgp, name=item[0], data=item[1], \
+                                                    log_clobber=log_clobber)
+    ## next item
+
+    # Flush repo
+    rgp.file.flush()
 
 ## end def store_mult_results
 
 
-def parse_mults(diagp, do_logging=False):
+def parse_mults(diagp, log_clobber=False):
     """ #DOC: parse_mults docstring
     """
 
@@ -889,7 +873,7 @@ def parse_mults(diagp, do_logging=False):
             for rg in mg.values():
                 # Check if group and name matches ref group pattern
                 if isinstance(rg, h5.Group) and \
-                                    p_refgrp.search(rg.name) != None:
+                                        p_refgrp.search(rg.name) != None:
                     # Check if output energy value exists
                     if not rg.get(h5_names.out_en) == None:
                         # Check if the reported SCF final energy is less than
@@ -909,52 +893,29 @@ def parse_mults(diagp, do_logging=False):
         ## end if
     ## next g
 
+    # Retrieve the appropriate min groups (should never fail, unless NO DATA
+    #  whatsoever exists for the diatomic)
+    mg = diagp.get(h5_names.mult_prfx + str(min_mult))
+    rg = mg.get(h5_names.ref_prfx + str(min_ref))
+
     # Store the minimum energy and multiplicity, and retrieve/store the other
     #  thermo values
-    diagp.require_dataset(name=h5_names.min_en, \
-                                shape=(), \
-                                dtype=np.float_, \
-                                exact=False, \
-                                data=min_en)
-    diagp.require_dataset(name=h5_names.min_en_mult, \
-                                shape=(), \
-                                dtype=np.int_, \
-                                exact=False, \
-                                data=min_mult)
-    diagp.require_dataset(name=h5_names.min_en_ref, \
-                                shape=(), \
-                                dtype=np.int_, \
-                                exact=False, \
-                                data=min_ref)
+    storage_data = (
+                (h5_names.min_en, min_en),
+                (h5_names.min_en_mult, min_mult),
+                (h5_names.min_en_ref, min_ref),
+                (h5_names.min_en_zpe, rg.get(h5_names.out_zpe).value),
+                (h5_names.min_en_enth, rg.get(h5_names.out_enth).value),
+                (h5_names.min_en_bondlen, rg.get(h5_names.out_bondlen).value),
+                (h5_names.min_en_dipmom, rg.get(h5_names.out_dipmom).value)
+                    )
+    for item in storage_data:
+        h5_clobber_dataset(diagp, name=item[0], data=item[1], \
+                                                    log_clobber=log_clobber)
+    ## next item
 
-    # Try to retrieve the appropriate min groups
-    mg = diagp.get(h5_names.mult_prfx + str(min_mult))
-    try:
-        rg = mg.get(h5_names.ref_prfx + str(min_ref))
-    except AttributeError:
-        rg = None
-    ## end try
-
-    diagp.require_dataset(name=h5_names.min_en_zpe, \
-                            shape=(), \
-                            dtype=np.float_, \
-                            exact=False, \
-                        data=rg.get(h5_names.out_zpe).value)
-    diagp.require_dataset(name=h5_names.min_en_enth, \
-                            shape=(), \
-                            dtype=np.float_, \
-                            exact=False, \
-                        data=rg.get(h5_names.out_enth).value)
-    diagp.require_dataset(name=h5_names.min_en_bondlen, \
-                            shape=(), \
-                            dtype=np.float_, \
-                            exact=False, \
-                        data=rg.get(h5_names.out_bondlen).value)
-    diagp.require_dataset(name=h5_names.min_en_dipmom, \
-                            shape=(), \
-                            dtype=np.float_, \
-                            exact=False, \
-                        data=rg.get(h5_names.out_dipmom).value)
+    # Flush the repo
+    diagp.file.flush()
 
 ## end def parse_mults
 
@@ -1000,6 +961,8 @@ def clear_tmp(base):
                     (fn[-3:] == "tmp" or fn[-5:] == "tmp.0" or \
                         fn[-5:] == "cpout"))]
 
+## end def clear_tmp
+
 
 def def_dia_xyz(m, nm, dist=init_dia_sep):
     """ #DOC: def_dia_xyz docstring
@@ -1012,6 +975,9 @@ def def_dia_xyz(m, nm, dist=init_dia_sep):
     xyz_str = "  " + atomSym[m].capitalize() + "  0 0 0 \n" + \
               "  " + atomSym[nm].capitalize() + "  0 0 " + str(dist)
     return xyz_str
+
+
+## end def def_dia_xyz
 
 
 def build_moread(m, nm, chg, mult, ref=None):
@@ -1159,6 +1125,40 @@ def continue_tuple(tupstr):
     return out_tup
 
 ## end def continue_tuple
+
+
+def h5_clobber_dataset(grp, name, shape=None, dtype=None, \
+                                    data=None, log_clobber=False, **kwargs):
+    """ #DOC: h5_clobber_dataset docstring.
+    """
+
+    # Imports
+    import logging, h5py as h5
+
+    # Retrieve logger
+    logger = logging.getLogger(log_names.loggername)
+
+    # Check existence of desired object
+    if name in grp.keys():
+        # Complain if it's not a dataset - WILL NOT FIND A SAME-NAMED GROUP
+        if not isinstance(grp.get(name), h5.Dataset):
+            # Catches links &c.
+            raise(ValueError("Item '" + name + "' is not a dataset"))
+        ## end if
+
+        # Clobber and flush repo; log if indicated
+        grp.pop(name)
+        grp.file.flush()
+        if log_clobber:
+            logger.info("Dataset '" + name + "' in group '" + grp.name + \
+                                                        "' was overwritten.")
+        ## end if
+    ## end if
+
+    # Either way, add new
+    grp.create_dataset(name, shape=shape, dtype=dtype, data=data, **kwargs)
+
+## end def h5_clobber_dataset
 
 
 if __name__ == '__main__':
