@@ -1251,10 +1251,10 @@ if __name__ == '__main__':
         init_dia_sep = float(params[INIT_SEP_DIA])
     ## end if
     if not params[OPT] == None:
-        opt_str = OPT
+        opt_str = params[OPT]
     ## end if
     if not params[EXEC] == None:
-        exec_cmd = EXEC
+        exec_cmd = params[EXEC]
     ## end if
     skip_atoms = bool(params[SKIP_ATOMS])
 
