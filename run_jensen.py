@@ -682,7 +682,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                 # Only worry about the prior geom if basing sep on it
                 if fixed_dia_sep:
                     # Just use the fixed value
-                    xyz_str = def_dia_xyz(m, nm)
+                    xyz_str = def_dia_xyz(m, nm, init_dia_sep)
                 else:
                     # Load the xyz info. Presume two atoms.
                     x = XYZ(path=(build_base(m, nm, chg, ref, ref) + ".xyz"))
@@ -691,7 +691,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                     if x.Dist_single(0,0,1) * PHYS.Ang_per_Bohr > \
                                                             ditch_sep_thresh:
                         # Too large; use default
-                        xyz_str = def_dia_xyz(m, nm)
+                        xyz_str = def_dia_xyz(m, nm, init_dia_sep)
                     else:
                         # OK. Use scaled value from prior, if not too small
                         xyz_str = def_dia_xyz(m, nm, \
@@ -704,7 +704,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
             else:
                 # Build from scratch if ref == mult
                 moread_str = "! NOAUTOSTART"
-                xyz_str = def_dia_xyz(m, nm)
+                xyz_str = def_dia_xyz(m, nm, init_dia_sep)
             ## end if
 
             # Try executing, looping across convergers. Should probably use a
