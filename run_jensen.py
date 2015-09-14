@@ -520,8 +520,6 @@ def run_mono(at, template_str, repo):
             # Check if completed and converged
             if oo.completed and oo.converged:
                 logger.info(base + " converged using " + conv_name)
-                h5_clobber_dataset(mgp,name=h5_names.converger, \
-                                        data=conv_name, log_clobber=True)
                 break
             else:
                 logger.warning(base + " did not converge using " + conv_name)
@@ -539,8 +537,6 @@ def run_mono(at, template_str, repo):
             # Again, check if completed / converged
             if oo.completed and oo.converged:
                 logger.info(base + " converged using " + conv_name)
-                h5_clobber_dataset(mgp,name=h5_names.converger, \
-                                        data=conv_name, log_clobber=True)
                 break
             else:
                 logger.warning(base + " did not converge using " + conv_name)
@@ -1148,7 +1144,6 @@ def h5_clobber_dataset(grp, name, shape=None, dtype=None, \
 
         # Clobber and flush repo; log if indicated
         grp.pop(name)
-        grp.file.flush()
         if log_clobber:
             logger.info("Dataset '" + name + "' in group '" + grp.name + \
                                                         "' was overwritten.")
