@@ -714,7 +714,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                 ## loop
 
                 # Update the reporting name for the converger
-                conv_name = conv + " & SLOWCONV"
+                conv_name = (conv if conv != "" else "default") + " & SLOWCONV"
 
                 # Try all convergers with SLOWCONV, clearing temp
                 #  files first
