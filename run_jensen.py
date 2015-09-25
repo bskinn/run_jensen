@@ -564,62 +564,12 @@ def run_mono(at, template_str, repo):
         ## next conv
 
         # Store useful outputs
-        storage_data = (
-                (h5_names.converger, conv_name),
-                (h5_names.out_en, oo.en_last()[oo.EN.SCFFINAL]),
-                (h5_names.out_zpe, oo.thermo[oo.THERMO.E_ZPE]),
-                (h5_names.out_enth, oo.thermo[oo.THERMO.H_IG])
-                        )
-        for item in storage_data:
-            h5_clobber_dataset(mgp,name=item[0], data=item[1], log_clobber=True)
-        ## next item
+        store_mono_results(mgp, conv_name, oo, log_clobber=True)
+
     ## next mult
 
-    # Initialize the minimum energy to zero, which everything should be less
-    #  than!  Also init min_mult to ~error value.
-    min_en = 0.0
-    min_mult = 0
-
-    # Loop over all multiplicity groups to identify the lowest-energy
-    #  multiplicity
-    for g in atgp.values():
-        # Check if a given value is a group and that its name matches the
-        #  pattern expected of a multiplicity group
-        if isinstance(g, h5.Group) and p_multgrp.search(g.name) != None:
-            # Confirm energy value exists
-            if g.get(h5_names.out_en) != None:
-                # Check if the reported SCF final energy is less than the
-                #  current minimum.
-                if g.get(h5_names.out_en).value < min_en:
-                    # If so, update the minimum and store the multiplicity
-                    min_en = np.float_(g.get(h5_names.out_en).value)
-                    min_mult = np.int_(p_multgrp.search(g.name).group("mult"))
-                ## end if
-            ## end if
-        ## end if
-    ## next g
-
-    # Store the minimum energy and multiplicity, and retrieve/store the other
-    #  thermo values
-    h5_clobber_dataset(atgp, name=h5_names.min_en, data=min_en, \
-                                                        log_clobber=True)
-    h5_clobber_dataset(atgp, name=h5_names.min_en_mult, data=min_mult, \
-                                                        log_clobber=True)
-
-    # Try to retrieve the appropriate group
-    mgp = atgp.get(h5_names.mult_prfx + str(min_mult))
-
-    # If any computation succeeded, *something* will be retrievable. If none
-    #  did, mgp will be None; report error if so.
-    if mgp == None:
-        logger.error("All computations failed for " + \
-                atomSym[at].capitalize())
-    else:
-        h5_clobber_dataset(atgp, name=h5_names.min_en_zpe, \
-                    data=mgp.get(h5_names.out_zpe).value, log_clobber=True)
-        h5_clobber_dataset(atgp, name=h5_names.min_en_enth, \
-                    data=mgp.get(h5_names.out_enth).value, log_clobber=True)
-    ## end if
+    # Parse the data for the different multiplicities to find the optimum
+    parse_mono_mults(atgp, log_clobber=True)
 
     # Pause if indicator file present
     while os.path.isfile(os.path.join(os.getcwd(),pausefname)):
@@ -828,6 +778,28 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 ## end def run_dia
 
 
+def store_mono_results(mgp, conv_name, oo, log_clobber=False):
+    """ #DOC: store_mono_results docstring
+    """
+
+    # Store useful outputs
+    storage_data = (
+            (h5_names.converger, conv_name),
+            (h5_names.out_en, oo.en_last()[oo.EN.SCFFINAL]),
+            (h5_names.out_zpe, oo.thermo[oo.THERMO.E_ZPE]),
+            (h5_names.out_enth, oo.thermo[oo.THERMO.H_IG])
+                    )
+    for item in storage_data:
+        h5_clobber_dataset(mgp,name=item[0], data=item[1], \
+                                                log_clobber=log_clobber)
+    ## next item
+
+    # Flush the repo
+    mgp.file.flush()
+
+## end def store_mono_results
+
+
 def store_dia_results(rgp, oo, xyz, log_clobber=False):
     """ #DOC: store_dia_results docstring
     """
@@ -857,6 +829,60 @@ def store_dia_results(rgp, oo, xyz, log_clobber=False):
     rgp.file.flush()
 
 ## end def store_dia_results
+
+
+def parse_mono_mults(atgp, log_clobber=False):
+    """ #DOC: parse_mono_mults docstring
+    """
+
+    # Imports
+    from opan.const import atomSym
+
+    # Initialize the minimum energy to zero, which everything should be less
+    #  than!  Also init min_mult to ~error value.
+    min_en = 0.0
+    min_mult = 0
+
+    # Loop over all multiplicity groups to identify the lowest-energy
+    #  multiplicity
+    for g in atgp.values():
+        # Check if a given value is a group and that its name matches the
+        #  pattern expected of a multiplicity group
+        if isinstance(g, h5.Group) and p_multgrp.search(g.name) != None:
+            # Confirm energy value exists
+            if g.get(h5_names.out_en) != None:
+                # Check if the reported SCF final energy is less than the
+                #  current minimum.
+                if g.get(h5_names.out_en).value < min_en:
+                    # If so, update the minimum and store the multiplicity
+                    min_en = np.float_(g.get(h5_names.out_en).value)
+                    min_mult = np.int_(p_multgrp.search(g.name).group("mult"))
+                ## end if
+            ## end if
+        ## end if
+    ## next g
+
+    # Store the minimum energy and multiplicity, and retrieve/store the other
+    #  thermo values
+    h5_clobber_dataset(atgp, name=h5_names.min_en, data=min_en, \
+                                                    log_clobber=log_clobber)
+    h5_clobber_dataset(atgp, name=h5_names.min_en_mult, data=min_mult, \
+                                                    log_clobber=log_clobber)
+
+    # Try to retrieve the appropriate group
+    mgp = atgp.get(h5_names.mult_prfx + str(min_mult))
+
+    # Something should be retrievable -- at least one computation on any
+    #  given atom should succeed.  (Historically, *all* have succeeded!)
+    h5_clobber_dataset(atgp, name=h5_names.min_en_zpe, \
+                data=mgp.get(h5_names.out_zpe).value, log_clobber=True)
+    h5_clobber_dataset(atgp, name=h5_names.min_en_enth, \
+                data=mgp.get(h5_names.out_enth).value, log_clobber=True)
+
+    # Flush the repo
+    atgp.file.flush()
+
+## end def parse_mono_mults
 
 
 def parse_dia_mults(diagp, log_clobber=False):
