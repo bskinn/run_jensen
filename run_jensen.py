@@ -281,6 +281,19 @@ def continue_dia(template_file, m, nm, chg, mult, ref, wkdir=None):
 ## end def continue_dia
 
 
+def recover_results():
+    """ #DOC: Docstring for recover_results
+    """
+
+    # Imports
+
+    # Bind repo
+    repo = h5.File(repofname)
+
+
+
+## end def recover_results
+
 def write_csv(repo):
     """ #DOC: Docstring for write_csv
         Is split into its own method to enable re-running later on
