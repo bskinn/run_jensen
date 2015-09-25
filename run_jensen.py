@@ -812,7 +812,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 
             # Store useful outputs to repo - bond length, final energy, HESS
             #  stuff, dipole moment
-            store_run_results(rgp, oo, XYZ(path=(base + ".xyz")), \
+            store_dia_results(rgp, oo, XYZ(path=(base + ".xyz")), \
                                                         log_clobber=True)
 
         ## next ref
@@ -820,16 +820,16 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
     ## next mult
 
     # Identify the minimum-energy multiplicity and associated properties.
-    #  May be inaccurate if key runs fail. parse_mults created to allow re-
+    #  May be inaccurate if key runs fail. parse_dia_mults created to allow re-
     #  running after the fact, once such key runs have been tweaked manually
     #  to re-run satisfactorily.
-    parse_mults(diagp, log_clobber=True)
+    parse_dia_mults(diagp, log_clobber=True)
 
 ## end def run_dia
 
 
-def store_run_results(rgp, oo, xyz, log_clobber=False):
-    """ #DOC: store_mult_results docstring
+def store_dia_results(rgp, oo, xyz, log_clobber=False):
+    """ #DOC: store_dia_results docstring
     """
 
     # Imports
@@ -856,11 +856,11 @@ def store_run_results(rgp, oo, xyz, log_clobber=False):
     # Flush repo
     rgp.file.flush()
 
-## end def store_mult_results
+## end def store_dia_results
 
 
-def parse_mults(diagp, log_clobber=False):
-    """ #DOC: parse_mults docstring
+def parse_dia_mults(diagp, log_clobber=False):
+    """ #DOC: parse_dia_mults docstring
     """
 
     # Imports
@@ -926,7 +926,7 @@ def parse_mults(diagp, log_clobber=False):
     # Flush the repo
     diagp.file.flush()
 
-## end def parse_mults
+## end def parse_dia_mults
 
 
 def merge_h5(f1, f2):
