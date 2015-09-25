@@ -69,6 +69,7 @@ class h5_names(object):
     out_enth = 'enthalpy'
     out_bondlen = 'bond_length'
     out_dipmom = 'dipole_moment'
+    out_freq = 'freq'
     min_en = 'min_en'
     min_en_mult = 'min_en_mult'
     min_en_ref = 'min_en_ref'
@@ -76,6 +77,7 @@ class h5_names(object):
     min_en_enth = 'min_en_enth'
     min_en_bondlen = 'min_en_bondlen'
     min_en_dipmom = 'min_en_dipmom'
+    min_en_freq = 'min_en_freq'
 ## end class h5_names
 
 # Regex patterns for quick testing
@@ -624,6 +626,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
     from opan.const import atomSym, PHYS
     from opan.utils import execute_orca as exor
     from opan.xyz import OPAN_XYZ as XYZ
+    from opan.hess import ORCA_HESS as HESS
     import os, logging
     from time import sleep
 
@@ -799,9 +802,16 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 
             # Store useful outputs to repo - bond length, final energy, HESS
             #  stuff, dipole moment
-            store_run_results(rgp, oo, XYZ(path=(base + ".xyz")), \
-                                                        log_clobber=True)
+            halt = store_run_results(rgp, oo, XYZ(path=(base + ".xyz")), \
+                                    HESS(base + ".hess"), log_clobber=True)
 
+            # Check for error states; report and halt if found
+            if halt == h5_names.out_freq:
+                logger.error(base + " yielded an imaginary frequency.")
+                h5_clobber_dataset(rgp, name=h5_names.converger, \
+                                            data="FAILED", log_clobber=True)
+                return
+            ## end if
         ## next ref
 
     ## next mult
@@ -815,16 +825,13 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 ## end def run_dia
 
 
-def store_run_results(rgp, oo, xyz, log_clobber=False):
+def store_run_results(rgp, oo, xyz, hess, log_clobber=False):
     """ #DOC: store_mult_results docstring
     """
 
     # Imports
     from opan.const import PHYS
     #TODO: Expand data stored in store_run_results as ORCA_OUTPUT expanded
-
-    #TODO: Implement check(s) for undesirable data here, passing a flag to
-    #  calling function to indicate need to halt the particular diatomic.
 
     # Store the data, overwriting if it exists
     storage_data = (
@@ -833,7 +840,8 @@ def store_run_results(rgp, oo, xyz, log_clobber=False):
                 (h5_names.out_enth, oo.thermo[oo.THERMO.H_IG]),
                 (h5_names.out_dipmom, oo.dipmoms[-1]),
                 (h5_names.out_bondlen, \
-                                PHYS.Ang_per_Bohr * xyz.Dist_single(0,0,1))
+                                PHYS.Ang_per_Bohr * xyz.Dist_single(0,0,1)),
+                (h5_names.out_freq, hess.freqs[-1])
                         )
     for item in storage_data:
         h5_clobber_dataset(rgp, name=item[0], data=item[1], \
@@ -842,6 +850,17 @@ def store_run_results(rgp, oo, xyz, log_clobber=False):
 
     # Flush repo
     rgp.file.flush()
+
+    # Initialize need-to-halt return value
+    halt = None
+
+    # If the frequency is negative, then halt is called for
+    if hess.freqs[-1] < 0:
+        halt = h5_names.out_freq
+    ## end if
+
+    # Return as appropriate
+    return halt
 
 ## end def store_mult_results
 
