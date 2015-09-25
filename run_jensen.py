@@ -553,9 +553,9 @@ def run_mono(at, template_str, repo):
         # Store useful outputs
         storage_data = (
                 (h5_names.converger, conv_name),
-                (h5_names.out_en, oo.en_last()[oo.EN_SCFFINAL]),
-                (h5_names.out_zpe, oo.thermo[oo.THERMO_E_ZPE]),
-                (h5_names.out_enth, oo.thermo[oo.THERMO_H_IG])
+                (h5_names.out_en, oo.en_last()[oo.EN.SCFFINAL]),
+                (h5_names.out_zpe, oo.thermo[oo.THERMO.E_ZPE]),
+                (h5_names.out_enth, oo.thermo[oo.THERMO.H_IG])
                         )
         for item in storage_data:
             h5_clobber_dataset(mgp,name=item[0], data=item[1], log_clobber=True)
@@ -828,9 +828,9 @@ def store_run_results(rgp, oo, xyz, log_clobber=False):
 
     # Store the data, overwriting if it exists
     storage_data = (
-                (h5_names.out_en, oo.en_last()[oo.EN_SCFFINAL]),
-                (h5_names.out_zpe, oo.thermo[oo.THERMO_E_ZPE]),
-                (h5_names.out_enth, oo.thermo[oo.THERMO_H_IG]),
+                (h5_names.out_en, oo.en_last()[oo.EN.SCFFINAL]),
+                (h5_names.out_zpe, oo.thermo[oo.THERMO.E_ZPE]),
+                (h5_names.out_enth, oo.thermo[oo.THERMO.H_IG]),
                 (h5_names.out_dipmom, oo.dipmoms[-1]),
                 (h5_names.out_bondlen, \
                                 PHYS.Ang_per_Bohr * xyz.Dist_single(0,0,1))
