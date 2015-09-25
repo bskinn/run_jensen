@@ -21,6 +21,7 @@
 # Module-level imports
 import os, logging, time, re, csv
 import h5py as h5, numpy as np
+from opan.const import DEF, E_Software as E_SW, E_FileType as E_FT
 
 
 # Module-level variables
@@ -281,15 +282,79 @@ def continue_dia(template_file, m, nm, chg, mult, ref, wkdir=None):
 ## end def continue_dia
 
 
-def recover_results():
+def recover_results(wipe_first, log_clobber=False):
     """ #DOC: Docstring for recover_results
     """
 
     # Imports
+    from opan.const import atomSym
+    from opan.output import ORCA_OUTPUT
+    from opan.error import OUTPUTError
 
     # Bind repo
     repo = h5.File(repofname)
 
+    # Set up the logger
+    setup_logger()
+    logger = logging.getLogger(log_names.loggername)
+
+    # Log starting recover attempt
+    logger.info("Starting results recovery: " + time.strftime("%c"))
+
+    # If wipe indicated, pop everything from the repo
+    if wipe_first:
+        [i.pop() for i in repo.values()]
+        repo.flush()
+        logger.info("Repository contents cleared.")
+    ## end if
+
+    # Monoatomics first
+    for at in nonmetals.union(metals):
+        # Create the base group and the max_mult value
+        atgp = repo.require_group(atomSym[at].capitalize())
+        max_mult = max_unpaired[at] + 1
+        h5_clobber_dataset(atgp, name=h5_names.max_mult, data=max_mult, \
+                                                    log_clobber=log_clobber)
+
+        # Loop over multiplicities, retrieving data
+        for mult in range(max_mult, -(max_mult % 2), -2):
+            # Define run base string and filename
+            base = atomSym[at].capitalize() + sep + str(mult)
+            fname = base + '.' + DEF.File_Extensions[E_SW.ORCA][E_FT.output]
+
+            # If the output file exists...
+            if os.path.isfile(fname):
+                # Try to import it, skipping the rest of the loop on an
+                #  OUTPUTError
+                try:
+                    oo = ORCA_OUTPUT(fname)
+                except OUTPUTError:
+                    logger.error("Could not process output file for " + \
+                            "computation '" + base + "'")
+                    continue
+                ## end try
+
+                # Should be good to create/retrieve multiplicity subgroup and
+                #  populate it. Start with the base name
+                mgp = atgp.require_group(h5_names.mult_prfx + str(mult))
+                h5_clobber_dataset(mgp,name=h5_names.run_base, data=base, \
+                                                        log_clobber=log_clobber)
+
+                # Now store the results, using a filler name for the
+                #  converger. #TODO: Actually detect the converger?
+                store_mono_results(mgp, "RECOVERED DATA", oo, \
+                                                log_clobber=log_clobber)
+
+            else:
+                logger.error("Could not locate output file for " + \
+                        "computation '" + base + "'")
+            ## end if
+        ## next mult
+
+        # Parse the data for the different multiplicities to find the optimum
+        parse_mono_mults(atgp, log_clobber=True)
+
+    ## next at
 
 
 ## end def recover_results
