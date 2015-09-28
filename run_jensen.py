@@ -841,7 +841,7 @@ def store_run_results(rgp, oo, xyz, hess, log_clobber=False):
                 (h5_names.out_dipmom, oo.dipmoms[-1]),
                 (h5_names.out_bondlen, \
                                 PHYS.Ang_per_Bohr * xyz.Dist_single(0,0,1)),
-                (h5_names.out_freq, hess.freqs[-1])
+                (h5_names.out_freq, hess.freqs[-1,0])
                         )
     for item in storage_data:
         h5_clobber_dataset(rgp, name=item[0], data=item[1], \
@@ -855,7 +855,7 @@ def store_run_results(rgp, oo, xyz, hess, log_clobber=False):
     halt = None
 
     # If the frequency is negative, then halt is called for
-    if hess.freqs[-1] < 0:
+    if hess.freqs[-1,0] < 0:
         halt = h5_names.out_freq
     ## end if
 
