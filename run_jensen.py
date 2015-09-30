@@ -801,9 +801,24 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
             ## next conv
 
             # Store useful outputs to repo - bond length, final energy, HESS
-            #  stuff, dipole moment
-            halt = store_run_results(rgp, oo, XYZ(path=(base + ".xyz")), \
-                                    HESS(base + ".hess"), log_clobber=True)
+            #  stuff, dipole moment. Must catch for possible corrupted or
+            #  absent output files.
+            try:
+                xyz = XYZ(path=(base + ".xyz"))
+            except:
+                logger.error("Error parsing XYZ file for '" + base + "'")
+                return
+            ## end try
+            try:
+                hess = HESS(base + ".hess"))
+            except:
+                logger.error("Error parsing HESS file for '" + \
+                                                            base + "'")
+                return
+            ## end try
+
+            # Attempt the storage of the results
+            halt = store_dia_results(rgp, oo, xyz, hess, log_clobber=True)
 
             # Check for error states; report and halt if found
             if halt == h5_names.out_freq:
