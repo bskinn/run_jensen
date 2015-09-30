@@ -33,6 +33,7 @@ pausefname = 'pause'
 dir_fmt = 'jensen_%Y%m%d_%H%M%S'
 sep = "_"
 NA_str = "NA"
+fail_conv = "FAILED"
 
 # Adjustable parameters (not all actually are adjustable yet)
 exec_cmd = 'runorca_pal.bat'
@@ -188,7 +189,7 @@ def do_run(template_file, wkdir=None):
             clear_tmp(atomSym[m].capitalize() + atomSym[nm].capitalize())
 
         ## next nm
-    ## next nm
+    ## next m
 
     # Generate the results csv
     write_csv(repo)
@@ -284,14 +285,16 @@ def continue_dia(template_file, m, nm, chg, mult, ref, wkdir=None):
 ## end def continue_dia
 
 
-def recover_results(wipe_first, log_clobber=False):
+def recover_results(skip_if_good=True, log_clobber=False):
     """ #DOC: Docstring for recover_results
     """
 
     # Imports
     from opan.const import atomSym
     from opan.output import ORCA_OUTPUT
-    from opan.error import OUTPUTError
+    from opan.error import OUTPUTError, XYZError, HESSError
+    from opan.xyz import OPAN_XYZ as XYZ
+    from opan.hess import ORCA_HESS as HESS
 
     # Bind repo
     repo = h5.File(repofname)
@@ -304,15 +307,15 @@ def recover_results(wipe_first, log_clobber=False):
     logger.info("Starting results recovery: " + time.strftime("%c"))
 
     # If wipe indicated, pop everything from the repo
-    if wipe_first:
-        [i.pop() for i in repo.values()]
+    if not skip_if_good:
+        repo.clear()
         repo.flush()
         logger.info("Repository contents cleared.")
     ## end if
 
     # Monoatomics first
     for at in nonmetals.union(metals):
-        # Create the base group and the max_mult value
+        # Create/retrieve the base group and the max_mult value
         atgp = repo.require_group(atomSym[at].capitalize())
         max_mult = max_unpaired[at] + 1
         h5_clobber_dataset(atgp, name=h5_names.max_mult, data=max_mult, \
@@ -344,8 +347,11 @@ def recover_results(wipe_first, log_clobber=False):
 
                 # Now store the results, using a filler name for the
                 #  converger. #TODO: Actually detect the converger?
-                store_mono_results(mgp, "RECOVERED DATA", oo, \
-                                                log_clobber=log_clobber)
+                with open(base + ".txt", 'r') as f:
+                    conv_name = find_conv_name(f.read())
+                ## end with
+
+                store_mono_results(mgp, conv_name, oo, log_clobber=log_clobber)
 
             else:
                 logger.error("Could not locate output file for " + \
@@ -356,10 +362,160 @@ def recover_results(wipe_first, log_clobber=False):
         # Parse the data for the different multiplicities to find the optimum
         parse_mono_mults(atgp, log_clobber=True)
 
+        # Flush the repo once for each atom
+        repo.flush()
+
     ## next at
+
+    # Now the diatomics
+    for m in metals:
+        for nm in nonmetals:
+            for chg in (0,1):
+                if chg == 0 or nm in cation_nms:
+                    # Retrieve the data
+                    # Create/retrieve group in the repo for the diatomic
+                    #  and charge
+                    diagp = repo.require_group(build_base(m, nm, chg))
+
+                    # Get the max multiplicity for the diatomic and store
+                    max_mult = max_unpaired[m] + max_unpaired[nm] + 1 - chg
+                    h5_clobber_dataset(diagp, name=h5_names.max_mult, \
+                                        data=max_mult, log_clobber=log_clobber)
+                    ## end if
+
+                    # Loop over multiplicities, retrieving data, until
+                    #  minimum mult is reached
+                    for mult in range(max_mult, -(max_mult % 2), -2):
+                        # Create/retrieve multiplicity subgroup in repo
+                        mgp = diagp.require_group(h5_names.mult_prfx + \
+                                                                    str(mult))
+
+                        # Loop over reference multiplicities, from max_mult to
+                        #  current mult
+                        for ref in range(max_mult, mult-2, -2):
+                            # Create/retrieve ref multiplicity subgroup
+                            rgp = mgp.require_group(h5_names.ref_prfx + \
+                                                                    str(ref))
+
+                            # Set & write base string to repo
+                            base = build_base(m, nm, chg, mult, ref)
+                            h5_clobber_dataset(rgp, name=h5_names.run_base, \
+                                            data=base, log_clobber=log_clobber)
+
+                            # Check for successful computation; log failure if
+                            #  not
+                            try:
+                                # Have to consider a possibly broken or
+                                #  missing .out file
+                                oo = ORCA_OUTPUT(base + '.out')
+                            except OUTPUTError, IOError:
+                                logger.error("Could not process output file" + \
+                                        " for computation '" + base + "'")
+                                h5_clobber_dataset(rgp, \
+                                            name=h5_names.converger, \
+                                            data=fail_conv, \
+                                            log_clobber=log_clobber)
+                                continue
+                            ## end try
+
+                            if not (oo.completed and oo.converged and \
+                                                            oo.optimized):
+                                #  Log failure and continue to next refmult
+                                logger.error(base + " opt failed to " + \
+                                            " converge in all computations.")
+                                h5_clobber_dataset(rgp, \
+                                            name=h5_names.converger, \
+                                            data=fail_conv, \
+                                            log_clobber=log_clobber)
+
+                                # Skip remainder of processing of this refmult
+                                continue ## to next refmult
+                            ## end if
+
+                            # Store useful outputs to repo - bond length, final
+                            #  energy, HESS stuff, dipole moment
+                            try:
+                                xyz = XYZ(path=(base + ".xyz"))
+                            except XYZError, IOError:
+                                logger.error("Error parsing XYZ file for '" + \
+                                                                    base + "'")
+                                h5_clobber_dataset(rgp, \
+                                            name=h5_names.converger, \
+                                            data=fail_conv, \
+                                            log_clobber=log_clobber)
+                                continue
+                            ## end try
+                            try:
+                                hess = HESS(base + ".hess")
+                            except HESSError, IOError:
+                                logger.error("Error parsing HESS file for '" + \
+                                                                    base + "'")
+                                h5_clobber_dataset(rgp, \
+                                            name=h5_names.converger, \
+                                            data=fail_conv, \
+                                            log_clobber=log_clobber)
+                                continue
+                            ## end try
+
+                            # Pull the results; store any halt code
+                            halt = store_dia_results(rgp, oo, xyz, hess, \
+                                                    log_clobber=log_clobber)
+
+                            # Check for error states; report and halt if found
+                            if halt == h5_names.out_freq:
+                                logger.error(base + " yielded an imaginary" + \
+                                                                " frequency.")
+                                h5_clobber_dataset(rgp, \
+                                                name=h5_names.converger, \
+                                                data=fail_conv, \
+                                                log_clobber=log_clobber)
+                                continue ## to next refmult
+                            ## end if
+                        ## next ref
+
+                    ## next mult
+
+                    # Identify the minimum-energy multiplicity and associated
+                    #  properties. May be inaccurate if key runs fail.
+                    #  parse_dia_mults created to allow re-running after the
+                    #  fact, once such key runs have been tweaked manually
+                    #  to re-run satisfactorily.
+                    parse_dia_mults(diagp, log_clobber=log_clobber)
+
+                    # Flush repo once per diatomic
+                    repo.flush()
+
+                ## end if
+            ## next q
+        ## next nm
+    ## next m
+
 
 
 ## end def recover_results
+
+
+def find_conv_name(inpstr):
+    """ #DOC: Docstring for find_conv_name
+    """
+
+    retstr = ""
+
+    if inpstr.upper().find("KDIIS") > -1:
+        retstr = "KDIIS"
+
+    if inpstr.upper().find("SOSCF") > -1:
+        retstr = ("" if len(retstr) == 0 else " & ") + "SOSCF"
+
+    if len(retstr) == 0:
+        retstr = "default"
+
+    if inpstr.upper().find("SLOWCONV") > -1:
+        retstr += " & SLOWCONV"
+
+    return retstr
+
+## end def find_conv_name
 
 def write_csv(repo):
     """ #DOC: Docstring for write_csv
@@ -626,12 +782,15 @@ def run_mono(at, template_str, repo):
             #  Log and skip to next multiplicity.
             logger.error(base + " failed to converge in all computations.")
             h5_clobber_dataset(mgp,name=h5_names.converger, \
-                                        data="FAILED", log_clobber=True)
+                                        data=fail_conv, log_clobber=True)
             continue  ## to next mult
         ## next conv
 
         # Store useful outputs
         store_mono_results(mgp, conv_name, oo, log_clobber=True)
+
+        # Flush the repo
+        repo.flush()
 
     ## next mult
 
@@ -811,7 +970,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                         logger.error(base + \
                                 " opt failed to converge in all computations.")
                         h5_clobber_dataset(rgp, name=h5_names.converger, \
-                                            data="FAILED", log_clobber=True)
+                                            data=fail_conv, log_clobber=True)
 
                         # Skip remainder of processing of this diatomic
                         return
@@ -821,7 +980,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                     logger.error(base + \
                                 " opt failed to converge in all computations.")
                     h5_clobber_dataset(rgp, name=h5_names.converger, \
-                                            data="FAILED", log_clobber=True)
+                                            data=fail_conv, log_clobber=True)
 
                     # Skip remainder of processing of this diatomic
                     return
@@ -829,15 +988,36 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
             ## next conv
 
             # Store useful outputs to repo - bond length, final energy, HESS
-            #  stuff, dipole moment
-            halt = store_dia_results(rgp, oo, XYZ(path=(base + ".xyz")), \
-                                    HESS(base + ".hess"), log_clobber=True)
+            #  stuff, dipole moment. Must catch for possible corrupted or
+            #  absent output files.
+            try:
+                xyz = XYZ(path=(base + ".xyz"))
+            except XYZError, IOError:
+                logger.error("Error parsing XYZ file for '" + base + "'")
+                h5_clobber_dataset(rgp, name=h5_names.converger, \
+                                            data=fail_conv, log_clobber=True)
+                return
+            ## end try
+            try:
+                hess = HESS(base + ".hess")
+            except HESSError, IOError:
+                logger.error("Error parsing HESS file for '" + \
+                                                            base + "'")
+                h5_clobber_dataset(rgp, name=h5_names.converger, \
+                                            data=fail_conv, log_clobber=True)
+                return
+            ## end try
+
+            # Attempt the storage of the results; flush repo
+            halt = store_dia_results(rgp, oo, xyz, hess, log_clobber=True)
+            repo.flush()
 
             # Check for error states; report and halt if found
             if halt == h5_names.out_freq:
                 logger.error(base + " yielded an imaginary frequency.")
                 h5_clobber_dataset(rgp, name=h5_names.converger, \
-                                            data="FAILED", log_clobber=True)
+                                            data=fail_conv, log_clobber=True)
+                repo.flush()
                 return
             ## end if
         ## next ref
@@ -869,8 +1049,7 @@ def store_mono_results(mgp, conv_name, oo, log_clobber=False):
                                                 log_clobber=log_clobber)
     ## next item
 
-    # Flush the repo
-    mgp.file.flush()
+    # DON'T flush the repo; do it outside the call
 
 ## end def store_mono_results
 
@@ -898,8 +1077,7 @@ def store_dia_results(rgp, oo, xyz, hess, log_clobber=False):
                                                     log_clobber=log_clobber)
     ## next item
 
-    # Flush repo
-    rgp.file.flush()
+    # DON'T flush the repo, do it outside the call
 
     # Initialize need-to-halt return value
     halt = None
