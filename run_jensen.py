@@ -810,7 +810,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
                 return
             ## end try
             try:
-                hess = HESS(base + ".hess"))
+                hess = HESS(base + ".hess")
             except:
                 logger.error("Error parsing HESS file for '" + \
                                                             base + "'")
