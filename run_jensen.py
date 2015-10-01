@@ -285,7 +285,7 @@ def continue_dia(template_file, m, nm, chg, mult, ref, wkdir=None):
 ## end def continue_dia
 
 
-def recover_results(skip_if_good=True, log_clobber=False):
+def recover_results(skip_if_good=True, log_clobber=False, log_debug=False):
     """ #DOC: Docstring for recover_results
     """
 
@@ -295,6 +295,8 @@ def recover_results(skip_if_good=True, log_clobber=False):
     from opan.error import OUTPUTError, XYZError, HESSError
     from opan.xyz import OPAN_XYZ as XYZ
     from opan.hess import ORCA_HESS as HESS
+    from opan.utils import make_timestamp
+    import logging
 
     # Bind repo
     repo = h5.File(repofname)
@@ -303,8 +305,16 @@ def recover_results(skip_if_good=True, log_clobber=False):
     setup_logger()
     logger = logging.getLogger(log_names.loggername)
 
+    # Enable debug logging if flagged
+    if log_debug:
+        logger.setLevel(logging.DEBUG)
+    ## end if
+
     # Log starting recover attempt
     logger.info("Starting results recovery: " + time.strftime("%c"))
+
+    # Store the starting time
+    start_time = time.time()
 
     # If wipe indicated, pop everything from the repo
     if not skip_if_good:
@@ -323,8 +333,29 @@ def recover_results(skip_if_good=True, log_clobber=False):
 
         # Loop over multiplicities, retrieving data
         for mult in range(max_mult, -(max_mult % 2), -2):
-            # Define run base string and filename
+            # Pre-retrieve the group (or, attempt, at least)
+            mgp = atgp.get(h5_names.mult_prfx + str(mult))
+
+            # Define the base string
             base = atomSym[at].capitalize() + sep + str(mult)
+
+            # If skip_if_good, mult group is found, and converger is not FAIL,
+            #  then skip to next mult
+            if skip_if_good and mgp != None:
+                # Pull the prior dataset and check (fragile if it's
+                #  a group, instead).
+                d_prior_conv = mgp.get(h5_names.converger)
+                if d_prior_conv != None and d_prior_conv.value != fail_conv:
+                    # Skip!
+                    logger.debug("Skipping re-import of '" + base + "'")
+                    continue ## to next mult
+                ## end if
+            ## end if
+
+            # Going to import - log it
+            logger.info("(Re-)importing data for '" + base + "'")
+
+            # Define run filename
             fname = base + '.' + DEF.File_Extensions[E_SW.ORCA][E_FT.output]
 
             # If the output file exists...
@@ -333,21 +364,22 @@ def recover_results(skip_if_good=True, log_clobber=False):
                 #  OUTPUTError
                 try:
                     oo = ORCA_OUTPUT(fname)
-                except OUTPUTError:
+                except OUTPUTError, IOError:
                     logger.error("Could not process output file for " + \
                             "computation '" + base + "'")
                     continue
                 ## end try
 
                 # Should be good to create/retrieve multiplicity subgroup and
-                #  populate it. Start with the base name
+                #  populate it. Rebind since mgp could be None from above
+                #  code.  Start with storing the base name.
                 mgp = atgp.require_group(h5_names.mult_prfx + str(mult))
                 h5_clobber_dataset(mgp,name=h5_names.run_base, data=base, \
                                                         log_clobber=log_clobber)
 
-                # Now store the results, using a filler name for the
-                #  converger. #TODO: Actually detect the converger?
-                with open(base + ".txt", 'r') as f:
+                # Now store the results, starting with detecting the converger.
+                with open(base + '.' + DEF.File_Extensions[E_SW.ORCA] \
+                                                [E_FT.inputfile], 'r') as f:
                     conv_name = find_conv_name(f.read())
                 ## end with
 
@@ -360,7 +392,7 @@ def recover_results(skip_if_good=True, log_clobber=False):
         ## next mult
 
         # Parse the data for the different multiplicities to find the optimum
-        parse_mono_mults(atgp, log_clobber=True)
+        parse_mono_mults(atgp, log_clobber=log_clobber)
 
         # Flush the repo once for each atom
         repo.flush()
@@ -393,21 +425,56 @@ def recover_results(skip_if_good=True, log_clobber=False):
                         # Loop over reference multiplicities, from max_mult to
                         #  current mult
                         for ref in range(max_mult, mult-2, -2):
-                            # Create/retrieve ref multiplicity subgroup
+                            # Attempt pre-retrieve of ref group
+                            rgp = mgp.get(h5_names.ref_prfx + str(ref))
+
+                            # Store base string
+                            base = build_base(m, nm, chg, mult, ref)
+
+                            # If skip_if_good, mult group is found, and
+                            #  converger is not FAIL, then skip to next refmult
+                            if skip_if_good and rgp != None:
+                                # Pull the prior dataset and check (fragile if
+                                #  it's a group, instead).
+                                d_prior_conv = rgp.get(h5_names.converger)
+                                if d_prior_conv != None and \
+                                                d_prior_conv.value != fail_conv:
+                                    # Skip!
+                                    logger.debug("Skipping re-import of '" + \
+                                                                    base + "'")
+                                    continue ## to next refmult
+                                ## end if
+                            ## end if
+
+                            # Going to import - log it
+                            logger.info("(Re-)importing data for '" + \
+                                                                base + "'")
+
+                            # Create/retrieve ref multiplicity subgroup, since
+                            #  rgp may be None after above code.
                             rgp = mgp.require_group(h5_names.ref_prfx + \
                                                                     str(ref))
 
-                            # Set & write base string to repo
-                            base = build_base(m, nm, chg, mult, ref)
+                            # Write base string to repo
                             h5_clobber_dataset(rgp, name=h5_names.run_base, \
                                             data=base, log_clobber=log_clobber)
+
+                            # Detect and store the nominal converger
+                            with open(base + '.' + \
+                                            DEF.File_Extensions[E_SW.ORCA] \
+                                            [E_FT.inputfile], 'r') as f:
+                                conv_name = find_conv_name(f.read())
+                            ## end with
+                            h5_clobber_dataset(rgp, name=h5_names.converger, \
+                                        data=conv_name, log_clobber=log_clobber)
 
                             # Check for successful computation; log failure if
                             #  not
                             try:
                                 # Have to consider a possibly broken or
                                 #  missing .out file
-                                oo = ORCA_OUTPUT(base + '.out')
+                                oo = ORCA_OUTPUT(base + '.' + \
+                                    DEF.File_Extensions[E_SW.ORCA][E_FT.output])
                             except OUTPUTError, IOError:
                                 logger.error("Could not process output file" + \
                                         " for computation '" + base + "'")
@@ -435,7 +502,8 @@ def recover_results(skip_if_good=True, log_clobber=False):
                             # Store useful outputs to repo - bond length, final
                             #  energy, HESS stuff, dipole moment
                             try:
-                                xyz = XYZ(path=(base + ".xyz"))
+                                xyz = XYZ(path=(base + '.' + \
+                                    DEF.File_Extensions[E_SW.ORCA][E_FT.xyz]))
                             except XYZError, IOError:
                                 logger.error("Error parsing XYZ file for '" + \
                                                                     base + "'")
@@ -446,7 +514,8 @@ def recover_results(skip_if_good=True, log_clobber=False):
                                 continue
                             ## end try
                             try:
-                                hess = HESS(base + ".hess")
+                                hess = HESS(base + '.' + \
+                                    DEF.File_Extensions[E_SW.ORCA][E_FT.hess])
                             except HESSError, IOError:
                                 logger.error("Error parsing HESS file for '" + \
                                                                     base + "'")
@@ -490,7 +559,13 @@ def recover_results(skip_if_good=True, log_clobber=False):
         ## next nm
     ## next m
 
+    # Close the repo
+    repo.close()
 
+    # Log end of execution
+    logger.info("Data import ended: " + time.strftime("%c"))
+    logger.info("Total elapsed time: " + \
+                                    make_timestamp(time.time() - start_time))
 
 ## end def recover_results
 
@@ -1137,9 +1212,9 @@ def parse_mono_mults(atgp, log_clobber=False):
     # Something should be retrievable -- at least one computation on any
     #  given atom should succeed.  (Historically, *all* have succeeded!)
     h5_clobber_dataset(atgp, name=h5_names.min_en_zpe, \
-                data=mgp.get(h5_names.out_zpe).value, log_clobber=True)
+                data=mgp.get(h5_names.out_zpe).value, log_clobber=log_clobber)
     h5_clobber_dataset(atgp, name=h5_names.min_en_enth, \
-                data=mgp.get(h5_names.out_enth).value, log_clobber=True)
+                data=mgp.get(h5_names.out_enth).value, log_clobber=log_clobber)
 
     # Flush the repo
     atgp.file.flush()
