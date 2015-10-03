@@ -1158,7 +1158,7 @@ def store_dia_results(rgp, oo, xyz, hess, log_clobber=False):
     halt = None
 
     # If the frequency is negative, then halt is called for
-    if hess.freqs[-1,0] < 0:
+    if hess.freqs[-1,0] <= 0:
         halt = h5_names.out_freq
     ## end if
 
