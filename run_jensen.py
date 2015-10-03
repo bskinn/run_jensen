@@ -1089,7 +1089,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 
             # Check for error states; report and halt if found
             if halt == h5_names.out_freq:
-                logger.error(base + " yielded an imaginary frequency.")
+                logger.error(base + " yielded a zero/imaginary frequency.")
                 h5_clobber_dataset(rgp, name=h5_names.converger, \
                                             data=fail_conv, log_clobber=True)
                 repo.flush()
