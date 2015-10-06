@@ -790,7 +790,7 @@ def run_mono(at, template_str, repo):
 
     # Imports
     from opan.const import atomSym, PHYS
-    from opan.utils import execute_orca as exor
+    from opan.utils.execute import execute_orca as exor
     from time import sleep
     import os, logging
 
@@ -886,7 +886,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
 
     # Imports
     from opan.const import atomSym, PHYS
-    from opan.utils import execute_orca as exor
+    from opan.utils.execute import execute_orca as exor
     from opan.xyz import OPAN_XYZ as XYZ
     from opan.hess import ORCA_HESS as HESS
     import os, logging
