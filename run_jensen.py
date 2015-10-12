@@ -364,7 +364,7 @@ def recover_results(skip_if_good=True, log_clobber=False, log_debug=False):
                 #  OUTPUTError
                 try:
                     oo = ORCA_OUTPUT(fname)
-                except OUTPUTError, IOError:
+                except (OUTPUTError, IOError):
                     logger.error("Could not process output file for " + \
                             "computation '" + base + "'")
                     continue
@@ -459,12 +459,24 @@ def recover_results(skip_if_good=True, log_clobber=False, log_debug=False):
                             h5_clobber_dataset(rgp, name=h5_names.run_base, \
                                             data=base, log_clobber=log_clobber)
 
-                            # Detect and store the nominal converger
-                            with open(base + '.' + \
+                            # Detect and store the nominal converger, logging
+                            #  error and continuing to next refmult if file
+                            #  load fails
+                            try:
+                                with open(base + '.' + \
                                             DEF.File_Extensions[E_SW.ORCA] \
                                             [E_FT.inputfile], 'r') as f:
-                                conv_name = find_conv_name(f.read())
-                            ## end with
+                                    conv_name = find_conv_name(f.read())
+                                ## end with
+                            except IOError:
+                                logger.error("Could not process input file" + \
+                                        " for computation '" + base + "'")
+                                h5_clobber_dataset(rgp, \
+                                            name=h5_names.converger, \
+                                            data=fail_conv, \
+                                            log_clobber=log_clobber)
+                                continue
+                            ## end try
                             h5_clobber_dataset(rgp, name=h5_names.converger, \
                                         data=conv_name, log_clobber=log_clobber)
 
@@ -475,7 +487,7 @@ def recover_results(skip_if_good=True, log_clobber=False, log_debug=False):
                                 #  missing .out file
                                 oo = ORCA_OUTPUT(base + '.' + \
                                     DEF.File_Extensions[E_SW.ORCA][E_FT.output])
-                            except OUTPUTError, IOError:
+                            except (OUTPUTError, IOError):
                                 logger.error("Could not process output file" + \
                                         " for computation '" + base + "'")
                                 h5_clobber_dataset(rgp, \
@@ -504,7 +516,7 @@ def recover_results(skip_if_good=True, log_clobber=False, log_debug=False):
                             try:
                                 xyz = XYZ(path=(base + '.' + \
                                     DEF.File_Extensions[E_SW.ORCA][E_FT.xyz]))
-                            except XYZError, IOError:
+                            except (XYZError, IOError):
                                 logger.error("Error parsing XYZ file for '" + \
                                                                     base + "'")
                                 h5_clobber_dataset(rgp, \
@@ -516,7 +528,7 @@ def recover_results(skip_if_good=True, log_clobber=False, log_debug=False):
                             try:
                                 hess = HESS(base + '.' + \
                                     DEF.File_Extensions[E_SW.ORCA][E_FT.hess])
-                            except HESSError, IOError:
+                            except (HESSError, IOError):
                                 logger.error("Error parsing HESS file for '" + \
                                                                     base + "'")
                                 h5_clobber_dataset(rgp, \
@@ -1067,7 +1079,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
             #  absent output files.
             try:
                 xyz = XYZ(path=(base + ".xyz"))
-            except XYZError, IOError:
+            except (XYZError, IOError):
                 logger.error("Error parsing XYZ file for '" + base + "'")
                 h5_clobber_dataset(rgp, name=h5_names.converger, \
                                             data=fail_conv, log_clobber=True)
@@ -1075,7 +1087,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
             ## end try
             try:
                 hess = HESS(base + ".hess")
-            except HESSError, IOError:
+            except (HESSError, IOError):
                 logger.error("Error parsing HESS file for '" + \
                                                             base + "'")
                 h5_clobber_dataset(rgp, name=h5_names.converger, \
@@ -1174,6 +1186,15 @@ def parse_mono_mults(atgp, log_clobber=False):
 
     # Imports
     from opan.const import atomSym
+    import logging
+
+    # Try to bind the logger -- should ALWAYS be bound when this is called
+    #  under normal execution circumstances, but will not be available if
+    #  called from the interpreter.
+    logger = logging.getLogger(log_names.loggername)
+    if len(logger.handlers) == 0:
+        logger = None
+    ## end if
 
     # Initialize the minimum energy to zero, which everything should be less
     #  than!  Also init min_mult to ~error value.
@@ -1198,6 +1219,16 @@ def parse_mono_mults(atgp, log_clobber=False):
             ## end if
         ## end if
     ## next g
+
+    # If minimum energy remains unchanged, then nothing found. Note as error
+    #  and skip remainder of import operation
+    if min_en == 0.0:
+        if logger != None:
+            logger.error("No results found for group '" + atgp.name + "'")
+            atgp.file.flush()
+            return
+        ## end if
+    ## end if
 
     # Store the minimum energy and multiplicity, and retrieve/store the other
     #  thermo values
@@ -1228,6 +1259,15 @@ def parse_dia_mults(diagp, log_clobber=False):
 
     # Imports
     from opan.const import atomSym
+    import logging
+
+    # Try to bind the logger -- should ALWAYS be bound when this is called
+    #  under normal execution circumstances, but will not be available if
+    #  called from the interpreter.
+    logger = logging.getLogger(log_names.loggername)
+    if len(logger.handlers) == 0:
+        logger = None
+    ## end if
 
     # Initialize the minimum energy to zero, which everything should be less
     #  than!  Also init min_mult to ~error value.
@@ -1264,6 +1304,16 @@ def parse_dia_mults(diagp, log_clobber=False):
             ## end if
         ## end if
     ## next g
+
+    # If minimum energy remains unchanged, then nothing found. Note as error
+    #  and skip remainder of import operation
+    if min_en == 0.0:
+        if logger != None:
+            logger.error("No results found for group '" + diagp.name + "'")
+            diagp.file.flush()
+            return
+        ## end if
+    ## end if
 
     # Retrieve the appropriate min groups (should never fail, unless NO DATA
     #  whatsoever exists for the diatomic)
@@ -1468,7 +1518,7 @@ def continue_tuple(tupstr):
     # Try the tuple strip-and-split conversion
     try:
         out_tup = tuple(map(int,workstr[1:-1].split(',')))
-    except:
+    except (ValueError, TypeError):
         msg = '"' + tupstr + '" is not a tuple of integers'
         raise(argparse.ArgumentTypeError(msg))
     ## end try
@@ -1507,8 +1557,12 @@ def h5_clobber_dataset(grp, name, shape=None, dtype=None, \
     # Imports
     import logging, h5py as h5
 
-    # Retrieve logger
+    # Retrieve logger -- reset to None if no handler bound, indicating a
+    #  presumed call from the interpreter
     logger = logging.getLogger(log_names.loggername)
+    if len(logger.handlers) == 0:
+        logger = None
+    ## end if
 
     # Check existence of desired object
     if name in grp.keys():
@@ -1520,7 +1574,7 @@ def h5_clobber_dataset(grp, name, shape=None, dtype=None, \
 
         # Clobber and flush repo; log if indicated
         grp.pop(name)
-        if log_clobber:
+        if log_clobber and not logger == None:
             logger.info("Dataset '" + name + "' in group '" + grp.name + \
                                                         "' was overwritten.")
         ## end if
