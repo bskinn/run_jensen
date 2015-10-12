@@ -191,10 +191,6 @@ def do_run(template_file, wkdir=None):
         ## next nm
     ## next m
 
-    # Generate the results csv
-    write_csv(repo)
-    logger.info("CSV file generated.")
-
     # Close the repository
     repo.close()
 
@@ -264,10 +260,6 @@ def continue_dia(template_file, m, nm, chg, mult, ref, wkdir=None):
 
     # Clear any residual temp files from failed comps
     clear_tmp(atomSym[m].capitalize() + atomSym[nm].capitalize())
-
-    # Generate the results csv
-    write_csv(repo)
-    logger.info("CSV file generated.")
 
     # Close the repository
     repo.close()
