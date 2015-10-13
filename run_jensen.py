@@ -924,7 +924,7 @@ def run_dia(m, nm, chg, template_str, repo, startvals=None):
         for ref in range(max_mult, mult-2, -2):
             # Drop to next ref if not to be run
             if startvals != None:
-                if ref > startvals[1]:
+                if ref > startvals[1] and mult == startvals[0]:
                     continue
                 ## end if
             ## end if
